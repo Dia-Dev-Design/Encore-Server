@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: ankane/pgvector
+    container_name: encore-db-dev
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: WoP4!8:"%7~>
+      POSTGRES_DB: encore
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./postgres/vector_extension.sql:/docker-entrypoint-initdb.d/vector_extension.sql
+
+  encore-backend:
+    build:
+      context: .
+      dockerfile: development.dockerfile
+    working_dir: /usr/app
+    environment:
+      DATABASE_URL: postgres://postgres:WoP4%218%3A%22%257~%3E@postgres:5432/encore
+      DATABASE_USER: postgres
+      DATABASE_PASSWORD: WoP4%218%3A%22%257~%3E
+      DATABASE_NAME: encore
+    depends_on:
+      - postgres
+    ports:
+      - '3000:3000'
+    volumes:
+      - .:/usr/app
+      - /usr/app/node_modules
+
+volumes:
+  postgres_data_dev:

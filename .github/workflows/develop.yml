@@ -1,0 +1,53 @@
+# This workflow will build and push a new container image to Amazon ECR,
+# and then will deploy a new task definition to Amazon ECS, when there is a push to the "develop" branch.
+
+name: Build & Deploy (Develop)
+
+on:
+  push:
+    branches: [ "develop" ]
+
+env:
+  ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+  DEVELOP_TAG_IMAGE: ${{ secrets.DEVELOP_TAG_IMAGE }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        IMAGE_TAG: ${{ secrets.DEVELOP_TAG_IMAGE }}
+      run: |
+        # Build a docker container and
+        # push it to ECR so that it can
+        # be deployed to ECS.
+        docker build -t $ECR_REPOSITORY:$DEVELOP_TAG_IMAGE .
+        docker push $ECR_REPOSITORY:$DEVELOP_TAG_IMAGE
+        echo "::set-output name=image::$ECR_REPOSITORY:$DEVELOP_TAG_IMAGE"
+
+    - name: Force deployment
+      run: |
+        aws ecs update-service --cluster ${{ secrets.DEVELOP_CLUSTER_NAME }} --service ${{ secrets.DEVELOP_SERVICE_NAME }} --force-new-deployment
