@@ -87,7 +87,6 @@ export class ChatbotService {
       distanceStrategy: 'cosine' as DistanceStrategy,
     };
 
-    // Inicializar el vectorStore
     this.vectorStore = await PGVectorStore.initialize(
       this.embeddings,
       vectorStoreConfig,
