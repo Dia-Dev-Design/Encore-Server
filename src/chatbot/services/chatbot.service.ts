@@ -1,4 +1,9 @@
-import { HttpException, HttpStatus, Injectable } from '@nestjs/common';
+import {
+  HttpException,
+  HttpStatus,
+  Injectable,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { OpenAIEmbeddings, ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
@@ -44,12 +49,13 @@ enum Sentiment {
 }
 
 @Injectable()
-export class ChatbotService {
+export class ChatbotService implements OnModuleDestroy {
   llm: ChatOpenAI;
   embeddings: OpenAIEmbeddings;
   vectorStore: PGVectorStore;
   agent: ReturnType<typeof createReactAgent>;
   splitter: RecursiveCharacterTextSplitter;
+  private pgPool: pg.Pool | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -102,7 +108,7 @@ export class ChatbotService {
       distanceStrategy: 'cosine' as DistanceStrategy,
     };
 
-    // Inicializar el vectorStore
+    // Initialize the vectorStore
     this.vectorStore = await PGVectorStore.initialize(
       this.embeddings,
       vectorStoreConfig,
@@ -187,13 +193,18 @@ export class ChatbotService {
         responseFormat: 'content',
       },
     );
-    const pool = new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: {
-        rejectUnauthorized: false,
-      },
-    });
-    const checkpointSaver = new PostgresSaver(pool);
+
+    // Reuse existing pool or create a new one
+    if (!this.pgPool) {
+      this.pgPool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: {
+          rejectUnauthorized: false,
+        },
+      });
+    }
+
+    const checkpointSaver = new PostgresSaver(this.pgPool);
     this.agent = await createReactAgent({
       llm: this.llm,
       tools: fileId ? [retrieve, searchTool] : [searchTool],
@@ -289,24 +300,29 @@ export class ChatbotService {
         parsedItemSeparator: '',
       });
 
-      this.vectorStore = await PGVectorStore.initialize(
-        this.embeddings,
-        config,
-      );
+      try {
+        this.vectorStore = await PGVectorStore.initialize(
+          this.embeddings,
+          config,
+        );
 
-      const docs = await loader.load();
-      const allSplits = await this.splitter.splitDocuments(docs);
+        const docs = await loader.load();
+        const allSplits = await this.splitter.splitDocuments(docs);
 
-      allSplits.forEach((split) => {
-        split.metadata.file_id = fileId;
-      });
+        allSplits.forEach((split) => {
+          split.metadata.file_id = fileId;
+        });
 
-      console.log(`Split document into ${allSplits.length} sub-documents.`);
-      await this.vectorStore.addDocuments(allSplits);
-      await this.prisma.chatThread.update({
-        where: { id: threadId },
-        data: { chatFileId: fileId },
-      });
+        console.log(`Split document into ${allSplits.length} sub-documents.`);
+        await this.vectorStore.addDocuments(allSplits);
+        await this.prisma.chatThread.update({
+          where: { id: threadId },
+          data: { chatFileId: fileId },
+        });
+      } finally {
+        // Close connections when done with document processing
+        await this.closeConnections();
+      }
     }
   }
 
@@ -351,14 +367,18 @@ export class ChatbotService {
       };
       const inputs = { messages: [{ role: 'user', content: inputMessage }] };
 
-      // Process and generate a response
-      for await (const step of await this.agent.stream(inputs, config)) {
-        const lastMessage = step.messages[step.messages.length - 1];
-        // this.prettyPrint(lastMessage);
-        if (isAIMessage(lastMessage) && !lastMessage.tool_calls?.length) {
-          await this.vectorStore.end();
-          return lastMessage.content;
+      try {
+        // Process and generate a response
+        for await (const step of await this.agent.stream(inputs, config)) {
+          const lastMessage = step.messages[step.messages.length - 1];
+          // this.prettyPrint(lastMessage);
+          if (isAIMessage(lastMessage) && !lastMessage.tool_calls?.length) {
+            return lastMessage.content;
+          }
         }
+      } finally {
+        // Close connections when done with processing
+        await this.closeConnections();
       }
     }
   }
@@ -735,124 +755,79 @@ export class ChatbotService {
         );
       }
 
-      // const checkpoints = await this.prisma.checkpoint.findMany({
-      //   where: {
-      //     thread_id: thread_id,
-      //   },
-      //   orderBy: {
-      //     created_at: 'asc',
-      //   },
-      // });
-
-      // const messages = checkpoints
-      //   ?.filter((checkpoint) => {
-      //     const source = (checkpoint?.metadata as { source?: string })?.source;
-      //     return source === 'input' || source === 'loop';
-      //   })
-      //   .map((checkpoint) => {
-      //     const source = (checkpoint?.metadata as { source?: string })?.source;
-      //     const checkpointId = checkpoint.checkpoint_id;
-      //     if (source === 'loop') {
-      //       const messages = (
-      //         checkpoint?.metadata as {
-      //           writes?: {
-      //             agent?: { messages?: Array<{ kwargs: { content: string } }> };
-      //           };
-      //         }
-      //       )?.writes?.agent?.messages;
-      //       if (messages) {
-      //         return messages.map((message) => ({
-      //           content: message.kwargs.content,
-      //           role: 'ai',
-      //           checkpoint_id: checkpointId,
-      //         }));
-      //       }
-      //     } else {
-      //       const messages = (
-      //         checkpoint?.metadata as {
-      //           writes?: {
-      //             __start__?: { messages?: Array<{ content: string }> };
-      //           };
-      //         }
-      //       )?.writes?.__start__?.messages;
-      //       if (messages) {
-      //         return messages.map((message) => ({
-      //           content: message.content,
-      //           role: 'user',
-      //           checkpoint_id: checkpointId,
-      //         }));
-      //       }
-      //     }
-      //   })
-      //   .flat()
-      //   .filter((msg) => msg?.content);
-
       await this.initializeAgent(thread.chatFileId);
-      const response = await this.agent.getState({
-        configurable: { thread_id },
-      });
-      const messages =
-        response?.values?.messages
-          ?.filter((msg) => {
-            if (
-              isHumanMessage(msg) ||
-              (isAIMessage(msg) && !msg.tool_calls?.length)
-            ) {
-              return msg;
-            }
-          })
-          .map((msg) => {
-            if (isHumanMessage(msg)) {
-              return {
-                id: msg.id,
-                role: 'user',
-                content: msg.content,
-              };
-            } else {
-              return {
-                id: msg.id,
-                role: 'ai',
-                content: msg.content,
-              };
-            }
-          }) || [];
+      try {
+        const response = await this.agent.getState({
+          configurable: { thread_id },
+        });
+        const messages =
+          response?.values?.messages
+            ?.filter((msg) => {
+              if (
+                isHumanMessage(msg) ||
+                (isAIMessage(msg) && !msg.tool_calls?.length)
+              ) {
+                return msg;
+              }
+            })
+            .map((msg) => {
+              if (isHumanMessage(msg)) {
+                return {
+                  id: msg.id,
+                  role: 'user',
+                  content: msg.content,
+                };
+              } else {
+                return {
+                  id: msg.id,
+                  role: 'ai',
+                  content: msg.content,
+                };
+              }
+            }) || [];
 
-      // Obtener mensajes de ChatLawyerMessage
-      const lawyerMessages = await this.prisma.chatLawyerMessage.findMany({
-        where: { ChatThreadId: thread_id },
-        orderBy: { createdAt: 'asc' },
-      });
+        // Obtener mensajes de ChatLawyerMessage
+        const lawyerMessages = await this.prisma.chatLawyerMessage.findMany({
+          where: { ChatThreadId: thread_id },
+          orderBy: { createdAt: 'asc' },
+        });
 
-      const formattedLawyerMessages = lawyerMessages.map((msg) => ({
-        content: msg.content,
-        role: msg.userMessageType === 'USER_COMPANY' ? 'user' : 'lawyer',
-        id: msg.id,
-        createdAt: msg.createdAt,
-        fileId: msg.fileId,
-      }));
+        const formattedLawyerMessages = lawyerMessages.map((msg) => ({
+          content: msg.content,
+          role: msg.userMessageType === 'USER_COMPANY' ? 'user' : 'lawyer',
+          id: msg.id,
+          createdAt: msg.createdAt,
+          fileId: msg.fileId,
+        }));
 
-      // Combinar ambos arrays y ordenarlos por fecha de creación
-      const allMessages = [...messages, ...formattedLawyerMessages];
+        // Combinar ambos arrays y ordenarlos por fecha de creación
+        const allMessages = [...messages, ...formattedLawyerMessages];
 
-      // get all files
-      const filesIds = await this.prisma.chatThreadFile.findMany({
-        where: { chatThreadId: thread_id },
-        orderBy: { createdAt: 'asc' },
-        select: { fileId: true },
-      });
+        // get all files
+        const filesIds = await this.prisma.chatThreadFile.findMany({
+          where: { chatThreadId: thread_id },
+          orderBy: { createdAt: 'asc' },
+          select: { fileId: true },
+        });
 
-      const files = await this.prisma.fileReference.findMany({
-        where: { id: { in: filesIds.map((file) => file.fileId) } },
-      });
+        const files = await this.prisma.fileReference.findMany({
+          where: { id: { in: filesIds.map((file) => file.fileId) } },
+        });
 
-      return {
-        chatType: thread.chatType,
-        files,
-        messages: allMessages,
-      };
+        return {
+          chatType: thread.chatType,
+          files,
+          messages: allMessages,
+        };
+      } finally {
+        // Close connections when done with history retrieval
+        await this.closeConnections();
+      }
     } catch (error) {
-      console.error('Error retrieving history:', error);
+      // Ensure connections are closed even if an error occurs
+      await this.closeConnections();
 
+      console.error('Error retrieving history:', error);
       throw new HttpException(
         `Error retrieving history: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -880,105 +855,117 @@ export class ChatbotService {
           HttpStatus.NOT_FOUND,
         );
       }
+
       await this.initializeAgent(thread.chatFileId);
-      if (isFavorite) {
-        await this.prisma.checkpoint.updateMany({
+      try {
+        if (isFavorite) {
+          await this.prisma.checkpoint.updateMany({
+            where: {
+              thread_id: threadId,
+              checkpoint_id: checkpointId,
+            },
+            data: {
+              is_favorite: true,
+            },
+          });
+        }
+        if (sentiment) {
+          await this.prisma.checkpoint.updateMany({
+            where: {
+              thread_id: threadId,
+              checkpoint_id: checkpointId,
+            },
+            data: {
+              sentiment,
+            },
+          });
+        }
+
+        const checkpoints = await this.prisma.checkpoint.findMany({
           where: {
             thread_id: threadId,
-            checkpoint_id: checkpointId,
           },
-          data: {
-            is_favorite: true,
-          },
-        });
-      }
-      if (sentiment) {
-        await this.prisma.checkpoint.updateMany({
-          where: {
-            thread_id: threadId,
-            checkpoint_id: checkpointId,
-          },
-          data: {
-            sentiment,
+          orderBy: {
+            created_at: 'asc',
           },
         });
+
+        const messages = checkpoints
+          ?.filter((checkpoint) => {
+            const source = (checkpoint?.metadata as { source?: string })
+              ?.source;
+            return source === 'input' || source === 'loop';
+          })
+          .map((checkpoint) => {
+            const source = (checkpoint?.metadata as { source?: string })
+              ?.source;
+            const checkpointId = checkpoint.checkpoint_id;
+            if (source === 'loop') {
+              const messages = (
+                checkpoint?.metadata as {
+                  writes?: {
+                    agent?: {
+                      messages?: Array<{ kwargs: { content: string } }>;
+                    };
+                  };
+                }
+              )?.writes?.agent?.messages;
+              if (messages) {
+                return messages.map((message) => ({
+                  content: message.kwargs.content,
+                  role: 'ai',
+                  checkpoint_id: checkpointId,
+                }));
+              }
+            } else {
+              const messages = (
+                checkpoint?.metadata as {
+                  writes?: {
+                    __start__?: { messages?: Array<{ content: string }> };
+                  };
+                }
+              )?.writes?.__start__?.messages;
+              if (messages) {
+                return messages.map((message) => ({
+                  content: message.content,
+                  role: 'user',
+                  checkpoint_id: checkpointId,
+                }));
+              }
+            }
+          })
+          .flat()
+          .filter((msg) => msg?.content);
+
+        // Obtener mensajes de ChatLawyerMessage
+        const lawyerMessages = await this.prisma.chatLawyerMessage.findMany({
+          where: { ChatThreadId: threadId },
+          orderBy: { createdAt: 'asc' },
+        });
+
+        const formattedLawyerMessages = lawyerMessages.map((msg) => ({
+          content: msg.content,
+          role: msg.userMessageType === 'USER_COMPANY' ? 'user' : 'lawyer',
+          id: msg.id,
+          createdAt: msg.createdAt,
+        }));
+
+        // Combinar ambos arrays y ordenarlos por fecha de creación
+        const allMessages = [...messages, ...formattedLawyerMessages];
+
+        return {
+          chatType: thread.chatType,
+          response: allMessages,
+        };
+      } finally {
+        // Close connections when done with checkpoint update
+        await this.closeConnections();
       }
-
-      const checkpoints = await this.prisma.checkpoint.findMany({
-        where: {
-          thread_id: threadId,
-        },
-        orderBy: {
-          created_at: 'asc',
-        },
-      });
-
-      const messages = checkpoints
-        ?.filter((checkpoint) => {
-          const source = (checkpoint?.metadata as { source?: string })?.source;
-          return source === 'input' || source === 'loop';
-        })
-        .map((checkpoint) => {
-          const source = (checkpoint?.metadata as { source?: string })?.source;
-          const checkpointId = checkpoint.checkpoint_id;
-          if (source === 'loop') {
-            const messages = (
-              checkpoint?.metadata as {
-                writes?: {
-                  agent?: { messages?: Array<{ kwargs: { content: string } }> };
-                };
-              }
-            )?.writes?.agent?.messages;
-            if (messages) {
-              return messages.map((message) => ({
-                content: message.kwargs.content,
-                role: 'ai',
-                checkpoint_id: checkpointId,
-              }));
-            }
-          } else {
-            const messages = (
-              checkpoint?.metadata as {
-                writes?: {
-                  __start__?: { messages?: Array<{ content: string }> };
-                };
-              }
-            )?.writes?.__start__?.messages;
-            if (messages) {
-              return messages.map((message) => ({
-                content: message.content,
-                role: 'user',
-                checkpoint_id: checkpointId,
-              }));
-            }
-          }
-        })
-        .flat()
-        .filter((msg) => msg?.content);
-
-      // Obtener mensajes de ChatLawyerMessage
-      const lawyerMessages = await this.prisma.chatLawyerMessage.findMany({
-        where: { ChatThreadId: threadId },
-        orderBy: { createdAt: 'asc' },
-      });
-
-      const formattedLawyerMessages = lawyerMessages.map((msg) => ({
-        content: msg.content,
-        role: msg.userMessageType === 'USER_COMPANY' ? 'user' : 'lawyer',
-        id: msg.id,
-        createdAt: msg.createdAt,
-      }));
-
-      // Combinar ambos arrays y ordenarlos por fecha de creación
-      const allMessages = [...messages, ...formattedLawyerMessages];
-
-      return {
-        chatType: thread.chatType,
-        response: allMessages,
-      };
     } catch (error) {
-      console.error('Error updating checkpoint:', error);
+      // Ensure connections are closed even if an error occurs
+      await this.closeConnections();
 
+      console.error('Error updating checkpoint:', error);
       throw new HttpException(
         `Error updating checkpoint: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -1122,5 +1109,30 @@ export class ChatbotService {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  async closeConnections() {
+    try {
+      // Close vectorStore connections if it exists
+      if (this.vectorStore) {
+        await this.vectorStore.end();
+      }
+
+      // Close the pg pool if it exists
+      if (this.pgPool) {
+        await this.pgPool.end();
+        this.pgPool = null;
+      }
+    } catch (error) {
+      console.error('Error closing database connections:', error);
+    }
+  }
+
+  // Implement OnModuleDestroy
+  async onModuleDestroy() {
+    console.log(
+      'ChatbotService is being destroyed. Closing database connections...',
+    );
+    await this.closeConnections();
   }
 }
