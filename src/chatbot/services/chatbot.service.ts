@@ -88,6 +88,9 @@ export class ChatbotService {
       postgresConnectionOptions: {
         type: 'postgres',
         connectionString: process.env.DATABASE_URL,
+        ssl: {
+          rejectUnauthorized: false,
+        },
       } as PoolConfig,
       tableName: 'vectorstore',
       columns: {
@@ -186,6 +189,9 @@ export class ChatbotService {
     );
     const pool = new Pool({
       connectionString: process.env.DATABASE_URL,
+      ssl: {
+        rejectUnauthorized: false,
+      },
     });
     const checkpointSaver = new PostgresSaver(pool);
     this.agent = await createReactAgent({
@@ -265,6 +271,9 @@ export class ChatbotService {
         postgresConnectionOptions: {
           type: 'postgres',
           connectionString: process.env.DATABASE_URL,
+          ssl: {
+            rejectUnauthorized: false,
+          },
         } as PoolConfig,
         tableName: 'vectorstore',
         columns: {
