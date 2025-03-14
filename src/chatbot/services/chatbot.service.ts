@@ -58,7 +58,6 @@ export class ChatbotService implements OnModuleDestroy {
   private pgPool: pg.Pool | null = null;
   private initialized = false;
 
-  // Add a cache for agents based on fileId
   private agentCache: Map<string, ReturnType<typeof createReactAgent>> =
     new Map();
   // Track current fileId to avoid unnecessary re-initialization
@@ -143,7 +142,6 @@ export class ChatbotService implements OnModuleDestroy {
         distanceStrategy: 'cosine' as DistanceStrategy,
       };
 
-      // Initialize the vectorStore
       this.vectorStore = await PGVectorStore.initialize(
         this.embeddings,
         vectorStoreConfig,
@@ -331,12 +329,8 @@ export class ChatbotService implements OnModuleDestroy {
   ) {
     await this.ensureInitialized();
 
-    const thread = await this.prisma.chatThread.findUnique({
-      where: { id: threadId },
-    });
-    if (!thread) {
-      throw new Error('Thread not found');
-    }
+    const thread = await this.validateThread(threadId);
+
     await this.prisma.chatThreadFile.create({
       data: {
         chatThreadId: threadId,
@@ -411,6 +405,301 @@ export class ChatbotService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Validates thread existence and optionally checks user ownership
+   */
+  private async validateThread(threadId: string, userId?: string) {
+    const query: any = { id: threadId };
+    if (userId) {
+      query.userId = userId;
+    }
+
+    const thread = await this.prisma.chatThread.findUnique({
+      where: query,
+      select: {
+        id: true,
+        userId: true,
+        chatFileId: true,
+        title: true,
+        chatType: true,
+        chatCompanyId: true,
+      },
+    });
+
+    if (!thread) {
+      throw new HttpException(
+        `Thread not found: ${threadId}`,
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    return thread;
+  }
+
+  /**
+   * Get and format lawyer messages for a thread
+   */
+  private async getLawyerMessages(threadId: string) {
+    const lawyerMessages = await this.prisma.chatLawyerMessage.findMany({
+      where: { ChatThreadId: threadId },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return lawyerMessages.map((msg) => ({
+      content: msg.content,
+      role: msg.userMessageType === 'USER_COMPANY' ? 'user' : 'lawyer',
+      id: msg.id,
+      createdAt: msg.createdAt,
+      fileId: msg.fileId,
+    }));
+  }
+
+  /**
+   * Get files associated with a thread
+   */
+  private async getThreadFiles(threadId: string) {
+    const filesIds = await this.prisma.chatThreadFile.findMany({
+      where: { chatThreadId: threadId },
+      orderBy: { createdAt: 'asc' },
+      select: { fileId: true },
+    });
+
+    const files = await this.prisma.fileReference.findMany({
+      where: { id: { in: filesIds.map((file) => file.fileId) } },
+    });
+
+    return files;
+  }
+
+  /**
+   * Handle errors for agent operations
+   */
+  private handleAgentError(error: any, fileId: string | null) {
+    console.error('Agent error:', error);
+    this.agentCache.delete(fileId || 'default');
+    this.currentFileId = null;
+  }
+
+  async getHistory(userId: string, thread_id: string) {
+    await this.ensureInitialized();
+
+    try {
+      const thread = await this.validateThread(thread_id);
+
+      // Only initialize agent if needed (different fileId)
+      const fileIdToUse = thread.chatFileId || null;
+      await this.initializeAgent(fileIdToUse);
+
+      // Verify agent was properly initialized
+      if (!this.agent) {
+        console.error('Agent was not properly initialized');
+        throw new HttpException(
+          'Error initializing chatbot agent',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+
+      try {
+        const response = await this.agent.getState({
+          configurable: { thread_id },
+        });
+
+        // Handle case where response might be undefined
+        if (!response || !response.values || !response.values.messages) {
+          return {
+            chatType: thread.chatType,
+            files: [],
+            messages: [],
+          };
+        }
+
+        const messages =
+          response?.values?.messages
+            ?.filter((msg) => {
+              if (
+                isHumanMessage(msg) ||
+                (isAIMessage(msg) && !msg.tool_calls?.length)
+              ) {
+                return msg;
+              }
+            })
+            .map((msg) => {
+              if (isHumanMessage(msg)) {
+                return {
+                  id: msg.id,
+                  role: 'user',
+                  content: msg.content,
+                };
+              } else {
+                return {
+                  id: msg.id,
+                  role: 'ai',
+                  content: msg.content,
+                };
+              }
+            }) || [];
+
+        // Get lawyer messages
+        const formattedLawyerMessages = await this.getLawyerMessages(thread_id);
+
+        // Combine arrays
+        const allMessages = [...messages, ...formattedLawyerMessages];
+
+        // Get files
+        const files = await this.getThreadFiles(thread_id);
+
+        return {
+          chatType: thread.chatType,
+          files,
+          messages: allMessages,
+        };
+      } catch (error) {
+        console.error('Error getting agent state:', error);
+        // Clear cache for this agent on error
+        this.handleAgentError(error, fileIdToUse);
+
+        // Return a minimal response with just lawyer messages if available
+        const formattedLawyerMessages = await this.getLawyerMessages(thread_id);
+        const files = await this.getThreadFiles(thread_id);
+
+        return {
+          chatType: thread.chatType,
+          files,
+          messages: formattedLawyerMessages,
+          error: 'Could not retrieve AI messages',
+        };
+      }
+    } catch (error) {
+      console.error('Error retrieving history:', error);
+      throw new HttpException(
+        `Error retrieving history: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async updateCheckpoint(
+    userId: string,
+    threadId: string,
+    checkpointId: string,
+    isFavorite: boolean,
+    sentiment: Sentiment,
+  ) {
+    await this.ensureInitialized();
+
+    try {
+      const thread = await this.validateThread(threadId, userId);
+
+      // Only initialize agent if needed (different fileId)
+      const fileIdToUse = thread.chatFileId || null;
+      if (this.currentFileId !== fileIdToUse) {
+        await this.initializeAgent(fileIdToUse);
+      }
+
+      try {
+        if (isFavorite) {
+          await this.prisma.checkpoint.updateMany({
+            where: {
+              thread_id: threadId,
+              checkpoint_id: checkpointId,
+            },
+            data: {
+              is_favorite: true,
+            },
+          });
+        }
+        if (sentiment) {
+          await this.prisma.checkpoint.updateMany({
+            where: {
+              thread_id: threadId,
+              checkpoint_id: checkpointId,
+            },
+            data: {
+              sentiment,
+            },
+          });
+        }
+
+        const checkpoints = await this.prisma.checkpoint.findMany({
+          where: {
+            thread_id: threadId,
+          },
+          orderBy: {
+            created_at: 'asc',
+          },
+        });
+
+        const messages = checkpoints
+          ?.filter((checkpoint) => {
+            const source = (checkpoint?.metadata as { source?: string })
+              ?.source;
+            return source === 'input' || source === 'loop';
+          })
+          .map((checkpoint) => {
+            const source = (checkpoint?.metadata as { source?: string })
+              ?.source;
+            const checkpointId = checkpoint.checkpoint_id;
+            if (source === 'loop') {
+              const messages = (
+                checkpoint?.metadata as {
+                  writes?: {
+                    agent?: {
+                      messages?: Array<{ kwargs: { content: string } }>;
+                    };
+                  };
+                }
+              )?.writes?.agent?.messages;
+              if (messages) {
+                return messages.map((message) => ({
+                  content: message.kwargs.content,
+                  role: 'ai',
+                  checkpoint_id: checkpointId,
+                }));
+              }
+            } else {
+              const messages = (
+                checkpoint?.metadata as {
+                  writes?: {
+                    __start__?: { messages?: Array<{ content: string }> };
+                  };
+                }
+              )?.writes?.__start__?.messages;
+              if (messages) {
+                return messages.map((message) => ({
+                  content: message.content,
+                  role: 'user',
+                  checkpoint_id: checkpointId,
+                }));
+              }
+            }
+          })
+          .flat()
+          .filter((msg) => msg?.content);
+
+        // Obtain messages from ChatLawyerMessage
+        const formattedLawyerMessages = await this.getLawyerMessages(threadId);
+
+        // Combine both arrays
+        const allMessages = [...messages, ...formattedLawyerMessages];
+
+        return {
+          chatType: thread.chatType,
+          response: allMessages,
+        };
+      } catch (error) {
+        // If we encounter an error, clear cache for this agent
+        this.handleAgentError(error, fileIdToUse);
+        throw error;
+      }
+    } catch (error) {
+      console.error('Error updating checkpoint:', error);
+      throw new HttpException(
+        `Error updating checkpoint: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   async processPrompt(
     userId: string,
     threadId: string,
@@ -419,13 +708,7 @@ export class ChatbotService implements OnModuleDestroy {
   ) {
     await this.ensureInitialized();
 
-    const thread = await this.prisma.chatThread.findUnique({
-      where: { id: threadId },
-      select: { chatFileId: true, title: true, chatType: true },
-    });
-    if (!thread) {
-      throw new Error('Thread not found');
-    }
+    const thread = await this.validateThread(threadId);
 
     // Check if thread's title is empty
     if (!thread.title) {
@@ -471,11 +754,22 @@ export class ChatbotService implements OnModuleDestroy {
       } catch (error) {
         console.error('Error processing prompt:', error);
         // If we encounter an error, clear cache for this agent
-        this.agentCache.delete(fileIdToUse || 'default');
-        this.currentFileId = null;
+        this.handleAgentError(error, fileIdToUse);
         throw error;
       }
-      // Don't close connections after processing - keep them alive for future requests
+    }
+  }
+
+  async getFilesByThread(thread_id: string, userId: string) {
+    try {
+      await this.validateThread(thread_id);
+      return this.getThreadFiles(thread_id);
+    } catch (error) {
+      console.error('Error retrieving thread files:', error);
+      throw new HttpException(
+        `Error retrieving thread files: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
     }
   }
 
@@ -545,17 +839,9 @@ export class ChatbotService implements OnModuleDestroy {
 
   async getThread(thread_id: string, userId: string) {
     try {
-      const thread = await this.prisma.chatThread.findUnique({
-        where: {
-          id: thread_id,
-          userId,
-        },
-      });
-
-      return thread;
+      return await this.validateThread(thread_id, userId);
     } catch (error) {
       console.error('Error retrieving thread:', error);
-
       throw new HttpException(
         `Error retrieving thread: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -835,299 +1121,6 @@ export class ChatbotService implements OnModuleDestroy {
     }
   }
 
-  async getHistory(userId: string, thread_id: string) {
-    await this.ensureInitialized();
-
-    try {
-      const thread = await this.prisma.chatThread.findUnique({
-        where: {
-          id: thread_id,
-          // userId,
-        },
-      });
-
-      if (!thread) {
-        throw new HttpException(
-          `Thread not found: ${thread_id}`,
-          HttpStatus.NOT_FOUND,
-        );
-      }
-
-      // Only initialize agent if needed (different fileId)
-      const fileIdToUse = thread.chatFileId || null;
-      await this.initializeAgent(fileIdToUse);
-
-      // Verify agent was properly initialized
-      if (!this.agent) {
-        console.error('Agent was not properly initialized');
-        throw new HttpException(
-          'Error initializing chatbot agent',
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
-      }
-
-      try {
-        const response = await this.agent.getState({
-          configurable: { thread_id },
-        });
-
-        // Handle case where response might be undefined
-        if (!response || !response.values || !response.values.messages) {
-          return {
-            chatType: thread.chatType,
-            files: [],
-            messages: [],
-          };
-        }
-
-        const messages =
-          response?.values?.messages
-            ?.filter((msg) => {
-              if (
-                isHumanMessage(msg) ||
-                (isAIMessage(msg) && !msg.tool_calls?.length)
-              ) {
-                return msg;
-              }
-            })
-            .map((msg) => {
-              if (isHumanMessage(msg)) {
-                return {
-                  id: msg.id,
-                  role: 'user',
-                  content: msg.content,
-                };
-              } else {
-                return {
-                  id: msg.id,
-                  role: 'ai',
-                  content: msg.content,
-                };
-              }
-            }) || [];
-
-        // Get lawyer messages
-        const lawyerMessages = await this.prisma.chatLawyerMessage.findMany({
-          where: { ChatThreadId: thread_id },
-          orderBy: { createdAt: 'asc' },
-        });
-
-        const formattedLawyerMessages = lawyerMessages.map((msg) => ({
-          content: msg.content,
-          role: msg.userMessageType === 'USER_COMPANY' ? 'user' : 'lawyer',
-          id: msg.id,
-          createdAt: msg.createdAt,
-          fileId: msg.fileId,
-        }));
-
-        // Combine arrays
-        const allMessages = [...messages, ...formattedLawyerMessages];
-
-        // Get files
-        const filesIds = await this.prisma.chatThreadFile.findMany({
-          where: { chatThreadId: thread_id },
-          orderBy: { createdAt: 'asc' },
-          select: { fileId: true },
-        });
-
-        const files = await this.prisma.fileReference.findMany({
-          where: { id: { in: filesIds.map((file) => file.fileId) } },
-        });
-
-        return {
-          chatType: thread.chatType,
-          files,
-          messages: allMessages,
-        };
-      } catch (error) {
-        console.error('Error getting agent state:', error);
-        // Clear cache for this agent on error
-        this.agentCache.delete(fileIdToUse || 'default');
-        this.currentFileId = null;
-
-        // Return a minimal response with just lawyer messages if available
-        const lawyerMessages = await this.prisma.chatLawyerMessage.findMany({
-          where: { ChatThreadId: thread_id },
-          orderBy: { createdAt: 'asc' },
-        });
-
-        const formattedLawyerMessages = lawyerMessages.map((msg) => ({
-          content: msg.content,
-          role: msg.userMessageType === 'USER_COMPANY' ? 'user' : 'lawyer',
-          id: msg.id,
-          createdAt: msg.createdAt,
-          fileId: msg.fileId,
-        }));
-
-        const filesIds = await this.prisma.chatThreadFile.findMany({
-          where: { chatThreadId: thread_id },
-          orderBy: { createdAt: 'asc' },
-          select: { fileId: true },
-        });
-
-        const files = await this.prisma.fileReference.findMany({
-          where: { id: { in: filesIds.map((file) => file.fileId) } },
-        });
-
-        return {
-          chatType: thread.chatType,
-          files,
-          messages: formattedLawyerMessages,
-          error: 'Could not retrieve AI messages',
-        };
-      }
-    } catch (error) {
-      console.error('Error retrieving history:', error);
-      throw new HttpException(
-        `Error retrieving history: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  async updateCheckpoint(
-    userId: string,
-    threadId: string,
-    checkpointId: string,
-    isFavorite: boolean,
-    sentiment: Sentiment,
-  ) {
-    await this.ensureInitialized();
-
-    try {
-      const thread = await this.prisma.chatThread.findUnique({
-        where: {
-          id: threadId,
-          userId,
-        },
-      });
-      if (!thread) {
-        throw new HttpException(
-          `Thread not found: ${threadId}`,
-          HttpStatus.NOT_FOUND,
-        );
-      }
-
-      // Only initialize agent if needed (different fileId)
-      const fileIdToUse = thread.chatFileId || null;
-      if (this.currentFileId !== fileIdToUse) {
-        await this.initializeAgent(fileIdToUse);
-      }
-
-      try {
-        if (isFavorite) {
-          await this.prisma.checkpoint.updateMany({
-            where: {
-              thread_id: threadId,
-              checkpoint_id: checkpointId,
-            },
-            data: {
-              is_favorite: true,
-            },
-          });
-        }
-        if (sentiment) {
-          await this.prisma.checkpoint.updateMany({
-            where: {
-              thread_id: threadId,
-              checkpoint_id: checkpointId,
-            },
-            data: {
-              sentiment,
-            },
-          });
-        }
-
-        const checkpoints = await this.prisma.checkpoint.findMany({
-          where: {
-            thread_id: threadId,
-          },
-          orderBy: {
-            created_at: 'asc',
-          },
-        });
-
-        const messages = checkpoints
-          ?.filter((checkpoint) => {
-            const source = (checkpoint?.metadata as { source?: string })
-              ?.source;
-            return source === 'input' || source === 'loop';
-          })
-          .map((checkpoint) => {
-            const source = (checkpoint?.metadata as { source?: string })
-              ?.source;
-            const checkpointId = checkpoint.checkpoint_id;
-            if (source === 'loop') {
-              const messages = (
-                checkpoint?.metadata as {
-                  writes?: {
-                    agent?: {
-                      messages?: Array<{ kwargs: { content: string } }>;
-                    };
-                  };
-                }
-              )?.writes?.agent?.messages;
-              if (messages) {
-                return messages.map((message) => ({
-                  content: message.kwargs.content,
-                  role: 'ai',
-                  checkpoint_id: checkpointId,
-                }));
-              }
-            } else {
-              const messages = (
-                checkpoint?.metadata as {
-                  writes?: {
-                    __start__?: { messages?: Array<{ content: string }> };
-                  };
-                }
-              )?.writes?.__start__?.messages;
-              if (messages) {
-                return messages.map((message) => ({
-                  content: message.content,
-                  role: 'user',
-                  checkpoint_id: checkpointId,
-                }));
-              }
-            }
-          })
-          .flat()
-          .filter((msg) => msg?.content);
-
-        // Obtain messages from ChatLawyerMessage
-        const lawyerMessages = await this.prisma.chatLawyerMessage.findMany({
-          where: { ChatThreadId: threadId },
-          orderBy: { createdAt: 'asc' },
-        });
-
-        const formattedLawyerMessages = lawyerMessages.map((msg) => ({
-          content: msg.content,
-          role: msg.userMessageType === 'USER_COMPANY' ? 'user' : 'lawyer',
-          id: msg.id,
-          createdAt: msg.createdAt,
-        }));
-
-        // Combine both arrays and sort them by creation date
-        const allMessages = [...messages, ...formattedLawyerMessages];
-
-        return {
-          chatType: thread.chatType,
-          response: allMessages,
-        };
-      } catch (error) {
-        // If we encounter an error, clear cache for this agent
-        this.agentCache.delete(fileIdToUse || 'default');
-        this.currentFileId = null;
-        throw error;
-      }
-    } catch (error) {
-      console.error('Error updating checkpoint:', error);
-      throw new HttpException(
-        `Error updating checkpoint: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
   async getMessages(
     userId: string,
     threadId: string,
@@ -1138,16 +1131,7 @@ export class ChatbotService implements OnModuleDestroy {
 
     try {
       // Verify if the thread belongs to the user
-      const thread = await this.prisma.chatThread.findUnique({
-        where: {
-          id: threadId,
-          // userId,
-        },
-      });
-
-      if (!thread) {
-        throw new HttpException('Thread not found', HttpStatus.NOT_FOUND);
-      }
+      await this.validateThread(threadId, userId);
 
       // Get checkpoints ordered by date
       const checkpoints = await this.prisma.checkpoint.findMany({
@@ -1230,35 +1214,6 @@ export class ChatbotService implements OnModuleDestroy {
       }
 
       return listThreads;
-    } catch (error) {
-      console.error('Error retrieving all threads :', error);
-
-      throw new HttpException(
-        `Error retrieving all threads : ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-  }
-
-  async getFilesByThread(thread_id: string, userId: string) {
-    try {
-      const thread = await this.prisma.chatThread.findUnique({
-        where: { id: thread_id },
-      });
-
-      if (!thread) {
-        throw new HttpException(
-          `Thread not found: ${thread_id}`,
-          HttpStatus.NOT_FOUND,
-        );
-      }
-
-      const files = await this.prisma.chatThreadFile.findMany({
-        where: { chatThreadId: thread_id },
-        orderBy: { createdAt: 'asc' },
-      });
-
-      return files;
     } catch (error) {
       console.error('Error retrieving all threads :', error);
 
