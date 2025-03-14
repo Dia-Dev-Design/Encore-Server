@@ -36,7 +36,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
     if (this.initialized) return;
 
     const config = {
-      embeddingModel: 'text-embedding-ada-002',
+      embeddingModel: 'text-embedding-3-small',
       apiKey: process.env.OPENAI_API_KEY,
       chunkSize: 1000,
       chunkOverlap: 200,
