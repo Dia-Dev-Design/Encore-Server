@@ -92,6 +92,7 @@ model User {
   NotificationsStaff  NotificationsStaff[]
   ChatLawyer          ChatLawyer[]
   FolderFileReference FolderFileReference[]
+  UserDocument        UserDocument[]
 }
 
 model Industry {
@@ -451,6 +452,7 @@ model FileReference {
   FolderFileReference FolderFileReference[]
   ChatThreadFile      ChatThreadFile[]
   ChatLawyerMessage   ChatLawyerMessage[]
+  UserDocument        UserDocument?
 }
 
 model Folder {
@@ -554,4 +556,28 @@ model DissolutionFlowStep {
   durationDays     Int
   totalTasks       Int?
   tasks            Json?
+}
+
+model UserDocument {
+  id        String   @id @default(uuid())
+  userId    String
+  fileId    String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  User User          @relation(fields: [userId], references: [id])
+  File FileReference @relation(fields: [fileId], references: [id])
+
+  @@index([userId])
+}
+
+/// This model is managed by LangChain, not Prisma
+model vectorstore {
+  id        String                @id
+  embedding Unsupported("vector")
+  content   String
+  metadata  Json
+
+  @@ignore
 }

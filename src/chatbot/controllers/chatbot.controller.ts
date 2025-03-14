@@ -24,6 +24,7 @@ import { Public } from '@prisma/client/runtime/library';
 import { User } from 'src/auth/decorators/user.decorator';
 import { UserEntity } from 'src/user/entities/user.entity';
 import { CompaniesService } from 'src/companies/companies.service';
+import { DocHubService } from 'src/dochub/services/dochub.service';
 
 enum Sentiment {
   GOOD = 'GOOD',
@@ -37,6 +38,7 @@ export class ChatbotController {
     private readonly chatbotService: ChatbotService,
     private readonly s3Service: S3Service,
     private readonly companyService: CompaniesService,
+    private readonly docHubService: DocHubService,
   ) {}
 
   @Post('threads')
@@ -392,6 +394,66 @@ export class ChatbotController {
     } catch (error) {
       throw new HttpException(
         `Error retrieving history: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('threads/documents/:thread_id')
+  @ApiResponse({
+    status: 200,
+    description: 'Get documents accessible to the chat',
+  })
+  async getThreadDocuments(
+    @Param('thread_id') thread_id: string,
+    @Request() req,
+  ) {
+    try {
+      const thread = await this.chatbotService.getThreadById(thread_id);
+      if (!thread) {
+        throw new NotFoundException(`Thread not found`);
+      }
+
+      if (thread.userId !== req?.user?.id) {
+        throw new ForbiddenException(
+          `You are not allowed to access this thread's documents`,
+        );
+      }
+
+      const userDocs = await this.docHubService.getUserDocuments(req?.user?.id);
+      const threadFiles = await this.chatbotService.getFilesByThread(
+        thread_id,
+        req?.user?.id,
+      );
+      return {
+        userDocuments: userDocs,
+        threadFiles: threadFiles,
+        chatFileId: thread.chatFileId,
+      };
+    } catch (error) {
+      throw new HttpException(
+        `Error retrieving thread documents: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @Get('user/documents')
+  @ApiResponse({
+    status: 200,
+    description: 'Get all documents accessible to the user',
+  })
+  async getUserDocuments(@Request() req) {
+    try {
+      const userDocs = await this.docHubService.getUserDocuments(req?.user?.id);
+      return {
+        userDocuments: userDocs,
+        message:
+          'These are all documents the user has access to across the system',
+      };
+    } catch (error) {
+      throw new HttpException(
+        `Error retrieving user documents: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

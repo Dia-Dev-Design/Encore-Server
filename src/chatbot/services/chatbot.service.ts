@@ -8,10 +8,6 @@ import {
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { OpenAIEmbeddings, ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
-import {
-  PGVectorStore,
-  DistanceStrategy,
-} from '@langchain/community/vectorstores/pgvector';
 import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { tool } from '@langchain/core/tools';
@@ -40,6 +36,7 @@ import {
   ChatLawyerStatus,
   ChatTypeEnum,
 } from '../enums/chatbot.enum';
+import { DocHubService } from 'src/dochub/services/dochub.service';
 dotenv.config();
 const { Pool } = pg;
 
@@ -53,7 +50,6 @@ enum Sentiment {
 export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   private llm: ChatOpenAI;
   private embeddings: OpenAIEmbeddings;
-  private vectorStore: PGVectorStore;
   private agent: ReturnType<typeof createReactAgent>;
   private splitter: RecursiveCharacterTextSplitter;
   private pgPool: pg.Pool | null = null;
@@ -67,6 +63,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chatLawyerService: ChatLawyerService,
+    private readonly docHubService: DocHubService,
   ) {
     // Constructor now does minimal work, initialization happens lazily
   }
@@ -79,7 +76,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       temperature: 0,
       apiKey: process.env.OPENAI_API_KEY,
       streaming: true,
-      embeddingModel: 'text-embedding-3-large',
+      embeddingModel: 'text-embedding-3-small',
       chunkSize: 1000,
       chunkOverlap: 200,
     };
@@ -105,57 +102,33 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     console.log('ChatbotService base components initialized');
   }
 
-  async initializeAgent(fileId?: string) {
+  async initializeAgent(userId?: string) {
     await this.ensureInitialized();
 
     // Convert undefined to null for consistent cache key comparison
-    const cacheKey = fileId || 'default';
+    const cacheKey = userId || 'default';
 
     try {
-      // If agent for this fileId is already cached and connections are alive, return it
+      // If agent for this userId is already cached and connections are alive, return it
       if (this.agentCache.has(cacheKey) && this.pgPool && !this.pgPool.ended) {
         this.agent = this.agentCache.get(cacheKey)!;
         this.currentFileId = cacheKey;
-        console.log(`Using cached agent for fileId: ${cacheKey}`);
+        console.log(`Using cached agent for userId: ${cacheKey}`);
         return;
       }
 
-      console.log(`Initializing new agent for fileId: ${cacheKey}`);
+      console.log(`Initializing new agent for userId: ${cacheKey}`);
 
-      // Close any existing connections before creating new ones
       await this.closeConnections();
-
-      const vectorStoreConfig = {
-        postgresConnectionOptions: {
-          type: 'postgres',
-          connectionString: process.env.DATABASE_URL,
-          ssl: {
-            rejectUnauthorized: false,
-          },
-        } as PoolConfig,
-        tableName: 'vectorstore',
-        columns: {
-          idColumnName: 'id',
-          vectorColumnName: 'vector',
-          contentColumnName: 'content',
-          metadataColumnName: 'metadata',
-        },
-        distanceStrategy: 'cosine' as DistanceStrategy,
-      };
-
-      this.vectorStore = await PGVectorStore.initialize(
-        this.embeddings,
-        vectorStoreConfig,
-      );
 
       const retrieveSchema = z.object({ query: z.string() });
       const retrieve = tool(
         async ({ query }) => {
           try {
-            const filterParams = fileId ? { file_id: fileId } : {};
-            const retrievedDocs = await this.vectorStore.similaritySearch(
+            const filterParams = userId ? { user_id: userId } : {};
+            const retrievedDocs = await this.docHubService.similaritySearch(
               query,
-              2,
+              5,
               filterParams,
             );
             const serialized = retrievedDocs
@@ -173,7 +146,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         {
           name: 'retrieve',
           description:
-            'Retrieve information related to a query from documents uploaded to the chatbot.',
+            'Retrieve information related to a query from documents uploaded by the user.',
           schema: retrieveSchema,
           responseFormat: 'content_and_artifact',
         },
@@ -250,7 +223,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       const checkpointSaver = new PostgresSaver(this.pgPool);
       this.agent = await createReactAgent({
         llm: this.llm,
-        tools: fileId ? [retrieve, searchTool] : [searchTool],
+        tools: userId ? [retrieve, searchTool] : [searchTool],
         checkpointSaver: checkpointSaver,
         stateModifier: async (
           state: typeof MessagesAnnotation.State,
@@ -281,21 +254,17 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         },
       });
 
-      // Verify agent was created successfully
       if (!this.agent) {
         throw new Error('Failed to initialize agent');
       }
 
-      // Cache the agent
       this.agentCache.set(cacheKey, this.agent);
       this.currentFileId = cacheKey;
 
-      console.log(`Agent initialized and cached for fileId: ${cacheKey}`);
+      console.log(`Agent initialized and cached for userId: ${cacheKey}`);
     } catch (error) {
-      console.error(`Error initializing agent for fileId ${fileId}:`, error);
-      // Clean up any partial resources
+      console.error(`Error initializing agent for userId ${userId}:`, error);
       await this.closeConnections();
-      // Propagate the error
       throw new HttpException(
         `Error initializing chatbot: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -338,70 +307,24 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         fileId,
       },
     });
+
     if (thread.chatType === ChatTypeEnum.CHATBOT) {
-      // Invalidate any cached agent for this file ID
-      if (this.agentCache.has(fileId)) {
-        console.log(`Invalidating cached agent for fileId: ${fileId}`);
-        this.agentCache.delete(fileId);
-      }
+      const userId = thread.userId;
 
-      // If this is the current file ID, clear it
-      if (this.currentFileId === fileId) {
-        this.currentFileId = null;
-      }
+      await this.docHubService.processDocument(file, fileId, userId);
 
-      const config = {
-        postgresConnectionOptions: {
-          type: 'postgres',
-          connectionString: process.env.DATABASE_URL,
-          ssl: {
-            rejectUnauthorized: false,
-          },
-        } as PoolConfig,
-        tableName: 'vectorstore',
-        columns: {
-          idColumnName: 'id',
-          vectorColumnName: 'vector',
-          contentColumnName: 'content',
-          metadataColumnName: 'metadata',
-        },
-        distanceStrategy: 'cosine' as DistanceStrategy,
-      };
-
-      const loader = new PDFLoader(new Blob([file]), {
-        parsedItemSeparator: '',
+      await this.prisma.chatThread.update({
+        where: { id: threadId },
+        data: { chatFileId: fileId },
       });
 
-      try {
-        // Close any existing vectorStore
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-        }
+      if (this.agentCache.has(userId)) {
+        console.log(`Invalidating cached agent for userId: ${userId}`);
+        this.agentCache.delete(userId);
+      }
 
-        this.vectorStore = await PGVectorStore.initialize(
-          this.embeddings,
-          config,
-        );
-
-        const docs = await loader.load();
-        const allSplits = await this.splitter.splitDocuments(docs);
-
-        allSplits.forEach((split) => {
-          split.metadata.file_id = fileId;
-        });
-
-        console.log(`Split document into ${allSplits.length} sub-documents.`);
-        await this.vectorStore.addDocuments(allSplits);
-        await this.prisma.chatThread.update({
-          where: { id: threadId },
-          data: { chatFileId: fileId },
-        });
-      } finally {
-        // Only close the vectorStore, not the entire connection
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-          this.vectorStore = null;
-        }
+      if (this.currentFileId === userId) {
+        this.currentFileId = null;
       }
     }
   }
@@ -487,9 +410,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     try {
       const thread = await this.validateThread(thread_id);
 
-      // Only initialize agent if needed (different fileId)
-      const fileIdToUse = thread.chatFileId || null;
-      await this.initializeAgent(fileIdToUse);
+      await this.initializeAgent(userId);
 
       // Verify agent was properly initialized
       if (!this.agent) {
@@ -556,8 +477,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         };
       } catch (error) {
         console.error('Error getting agent state:', error);
-        // Clear cache for this agent on error
-        this.handleAgentError(error, fileIdToUse);
+        this.handleAgentError(error, userId);
 
         // Return a minimal response with just lawyer messages if available
         const formattedLawyerMessages = await this.getLawyerMessages(thread_id);
@@ -591,11 +511,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     try {
       const thread = await this.validateThread(threadId, userId);
 
-      // Only initialize agent if needed (different fileId)
-      const fileIdToUse = thread.chatFileId || null;
-      if (this.currentFileId !== fileIdToUse) {
-        await this.initializeAgent(fileIdToUse);
-      }
+      await this.initializeAgent(userId);
 
       try {
         if (isFavorite) {
@@ -689,7 +605,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         };
       } catch (error) {
         // If we encounter an error, clear cache for this agent
-        this.handleAgentError(error, fileIdToUse);
+        this.handleAgentError(error, userId);
         throw error;
       }
     } catch (error) {
@@ -731,11 +647,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         UserTypeEnum.USER_COMPANY,
       );
     } else {
-      // Only initialize agent if needed (different fileId)
-      const fileIdToUse = thread.chatFileId || null;
-      if (this.currentFileId !== fileIdToUse) {
-        await this.initializeAgent(fileIdToUse);
-      }
+      await this.initializeAgent(userId);
 
       const config = {
         configurable: { thread_id: threadId },
@@ -747,15 +659,13 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         // Process and generate a response
         for await (const step of await this.agent.stream(inputs, config)) {
           const lastMessage = step.messages[step.messages.length - 1];
-          // this.prettyPrint(lastMessage);
           if (isAIMessage(lastMessage) && !lastMessage.tool_calls?.length) {
             return lastMessage.content;
           }
         }
       } catch (error) {
         console.error('Error processing prompt:', error);
-        // If we encounter an error, clear cache for this agent
-        this.handleAgentError(error, fileIdToUse);
+        this.handleAgentError(error, userId);
         throw error;
       }
     }
@@ -1227,13 +1137,6 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
   async closeConnections() {
     try {
-      // Close vectorStore connections if it exists
-      if (this.vectorStore) {
-        await this.vectorStore.end();
-        this.vectorStore = null;
-      }
-
-      // Close the pg pool if it exists
       if (this.pgPool) {
         await this.pgPool.end();
         this.pgPool = null;

@@ -49,22 +49,28 @@ export class S3Service {
       params: s3Params,
     }).done();
 
-    return this.prisma.fileReference.create({
-      data: {
-        key: s3Params.Key,
-        originalName: file.originalname,
-        url: uploadResult.Location,
-        mimeType: file.mimetype,
-        size: file.size,
-        FolderFileReference: {
-          create: {
-            userId: params.userId,
-            staffId: params.staffId,
-            product: ProductEnum.CHATBOT,
-            folderId: params.rootFolderId,
-          },
+    const fileData: any = {
+      key: s3Params.Key,
+      originalName: file.originalname,
+      url: uploadResult.Location,
+      mimeType: file.mimetype,
+      size: file.size,
+      fileType: fileType,
+    };
+
+    if (params?.rootFolderId) {
+      fileData.FolderFileReference = {
+        create: {
+          userId: params.userId,
+          staffId: params.staffId,
+          product: ProductEnum.CHATBOT,
+          folderId: params.rootFolderId,
         },
-      },
+      };
+    }
+
+    return this.prisma.fileReference.create({
+      data: fileData,
     });
   }
 

@@ -20,6 +20,7 @@ import { FilesModule } from './files/files.module';
 import { FoldersModule } from './folders/folders.module';
 import { ChatbotModule } from './chatbot/chatbot.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { DocHubModule } from './dochub/dochub.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { NotificationsModule } from './notifications/notifications.module';
     FilesModule,
     FoldersModule,
     NotificationsModule,
+    DocHubModule,
   ],
   controllers: [AppController],
   providers: [AppService],
