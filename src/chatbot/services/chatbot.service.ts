@@ -3,6 +3,7 @@ import {
   HttpStatus,
   Injectable,
   OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { OpenAIEmbeddings, ChatOpenAI } from '@langchain/openai';
@@ -49,7 +50,7 @@ enum Sentiment {
 }
 
 @Injectable()
-export class ChatbotService implements OnModuleDestroy {
+export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   private llm: ChatOpenAI;
   private embeddings: OpenAIEmbeddings;
   private vectorStore: PGVectorStore;
@@ -240,9 +241,9 @@ export class ChatbotService implements OnModuleDestroy {
         ssl: {
           rejectUnauthorized: false,
         },
-        // Add connection pool configuration for better performance
-        max: 20, // maximum number of clients
-        idleTimeoutMillis: 30000, // close idle clients after 30 seconds
+        max: 30, // maximum number of clients
+        min: 5, // keep some connections warm
+        idleTimeoutMillis: 60000, // close idle clients after 60 seconds
         connectionTimeoutMillis: 2000, // return an error after 2 seconds if connection could not be established
       });
 
@@ -1253,5 +1254,12 @@ export class ChatbotService implements OnModuleDestroy {
     // Clear the agent cache
     this.agentCache.clear();
     await this.closeConnections();
+  }
+
+  async onModuleInit() {
+    await this.ensureInitialized();
+    // Pre-warm the default agent
+    await this.initializeAgent();
+    console.log('Default agent pre-warmed and ready');
   }
 }
