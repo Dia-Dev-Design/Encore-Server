@@ -18,6 +18,7 @@ import {
   ChatbotLawyerReqStatusEnum,
   HasReqChatbotLawyerEnum,
 } from '../chatbot/enums/chatbot.enum';
+import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class CompaniesRepository {
@@ -186,16 +187,30 @@ export class CompaniesRepository {
     company: OmitCreateProperties<CompanyEntity>,
     user: UserEntity,
   ) {
-    return this.prisma.company.create({
-      data: {
-        ...company,
-        UserCompany: {
-          create: {
-            userId: user.id,
-            role: UserCompanyRole.OWNER,
+    const rootFolderId = uuidv4();
+    return this.prisma.$transaction(async (prisma) => {
+      const newCompany = await prisma.company.create({
+        data: {
+          ...company,
+          UserCompany: {
+            create: {
+              userId: user.id,
+              role: UserCompanyRole.OWNER,
+            },
           },
         },
-      },
+      });
+      const rootFolder = await prisma.folder.create({
+        data: {
+          id: rootFolderId,
+          name: `${company.name} Root Folder`,
+          companyId: newCompany.id,
+        },
+      });
+      return prisma.company.update({
+        where: { id: newCompany.id },
+        data: { rootFolderId: rootFolder.id },
+      });
     });
   }
 

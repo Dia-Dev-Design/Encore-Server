@@ -79,6 +79,17 @@ export class CompaniesService {
     return company;
   }
 
+  async getUserCompany(userId: string) {
+    return this.prisma.userCompany.findFirst({
+      where: {
+        userId,
+      },
+      include: {
+        Company: true,
+      },
+    });
+  }
+
   async getCompanies(
     filters: CompanyFilterParamsDto,
   ): Promise<GetCompaniesDto> {
@@ -856,5 +867,34 @@ export class CompaniesService {
         data: { rootFolderId, hasPaidTheFee: true },
       });
     });
+  }
+
+  async ensureCompanyRootFolder(companyId: string): Promise<string> {
+    const company = await this.companiesRepository.getById(companyId);
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    if (company.rootFolderId) {
+      return company.rootFolderId;
+    }
+
+    const rootFolderId = uuidv4();
+    await this.prisma.$transaction(async (prisma) => {
+      const rootFolder = await prisma.folder.create({
+        data: {
+          id: rootFolderId,
+          name: `${company.name} Root Folder`,
+          companyId,
+        },
+      });
+
+      await prisma.company.update({
+        where: { id: companyId },
+        data: { rootFolderId: rootFolder.id },
+      });
+    });
+
+    return rootFolderId;
   }
 }

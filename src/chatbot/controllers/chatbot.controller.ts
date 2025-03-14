@@ -24,6 +24,7 @@ import { Public } from '@prisma/client/runtime/library';
 import { User } from 'src/auth/decorators/user.decorator';
 import { UserEntity } from 'src/user/entities/user.entity';
 import { CompaniesService } from 'src/companies/companies.service';
+import { DocHubService } from 'src/dochub/services/dochub.service';
 
 enum Sentiment {
   GOOD = 'GOOD',
@@ -37,6 +38,7 @@ export class ChatbotController {
     private readonly chatbotService: ChatbotService,
     private readonly s3Service: S3Service,
     private readonly companyService: CompaniesService,
+    private readonly docHubService: DocHubService,
   ) {}
 
   @Post('threads')
