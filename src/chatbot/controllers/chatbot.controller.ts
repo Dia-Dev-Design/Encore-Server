@@ -188,27 +188,48 @@ export class ChatbotController {
   }
 
   @Post('ask')
+  @ApiBearerAuth()
   @ApiResponse({
     status: 200,
     description: 'Answer successfully generated',
   })
   async handlePrompt(@Request() req, @Body() body) {
     const { thread_id, prompt, fileId } = body;
+
     if (!thread_id) {
-      new HttpException(`Thread ID is required`, HttpStatus.BAD_REQUEST);
+      throw new HttpException('Thread ID is required', HttpStatus.BAD_REQUEST);
     }
+
     if (!prompt) {
-      new HttpException(`Prompt is required`, HttpStatus.BAD_REQUEST);
+      throw new HttpException('Prompt is required', HttpStatus.BAD_REQUEST);
     }
+
     try {
+      // Verify user is authorized to access this thread
+      const thread = await this.chatbotService.getThread(
+        thread_id,
+        req?.user?.id,
+      );
+      if (!thread) {
+        throw new HttpException(
+          'Thread not found or access denied',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
       const response = await this.chatbotService.processPrompt(
         req?.user?.id,
         thread_id,
         prompt,
-        fileId,
+        fileId || null,
       );
+
       return { response };
     } catch (error) {
+      console.error('Error processing prompt:', error);
+      if (error instanceof HttpException) {
+        throw error;
+      }
       throw new HttpException(
         `Error processing prompt: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR,
@@ -224,7 +245,7 @@ export class ChatbotController {
   })
   async getHistory(@Request() req, @Param('thread_id') thread_id: string) {
     if (!thread_id) {
-      new HttpException(`Thread ID is required`, HttpStatus.BAD_REQUEST);
+      throw new HttpException(`Thread ID is required`, HttpStatus.BAD_REQUEST);
     }
     try {
       const response = await this.chatbotService.getHistory(
@@ -315,10 +336,13 @@ export class ChatbotController {
   ) {
     const { threadId, isFavorite, sentiment } = body;
     if (!checkpointId) {
-      new HttpException(`Checkpoint ID is required`, HttpStatus.BAD_REQUEST);
+      throw new HttpException(
+        `Checkpoint ID is required`,
+        HttpStatus.BAD_REQUEST,
+      );
     }
     if (!threadId) {
-      new HttpException(`Thread ID is required`, HttpStatus.BAD_REQUEST);
+      throw new HttpException(`Thread ID is required`, HttpStatus.BAD_REQUEST);
     }
     if (isFavorite === undefined && sentiment === undefined) {
       throw new HttpException(
@@ -360,7 +384,7 @@ export class ChatbotController {
   })
   async getHistoryForAdmin(@Param('threadId') threadId: string) {
     if (!threadId) {
-      new HttpException(`Thread ID is required`, HttpStatus.BAD_REQUEST);
+      throw new HttpException(`Thread ID is required`, HttpStatus.BAD_REQUEST);
     }
     try {
       const response = await this.chatbotService.getHistory(null, threadId);
