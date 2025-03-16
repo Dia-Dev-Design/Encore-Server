@@ -14,6 +14,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, strategyId) {
     private readonly configService: ConfigService,
   ) {
     super({
+      configService: ConfigService,
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       secretOrKey: configService.get('jwt.secret'),
     });
@@ -22,6 +23,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, strategyId) {
   async validate(payload: {
     userId: string;
     email: string;
+    accessToken: string;
     iat: number;
     exp: number;
   }) {

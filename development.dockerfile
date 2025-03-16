@@ -2,9 +2,9 @@ FROM node:20.10-alpine
 
 WORKDIR /usr/app
 
-COPY package*.json ./
-COPY yarn.lock ./
+COPY package.json ./
+# COPY yarn.lock ./
 
-RUN yarn install
+RUN npm install
 
-CMD yarn migrate:deploy && yarn start:dev
+CMD npm migrate:deploy && npm start:dev
