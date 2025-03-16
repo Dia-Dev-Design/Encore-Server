@@ -4,6 +4,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 export class IndustriesRepository {
   constructor(private prisma: PrismaService) {}
   findAll() {
+    console.log('These are our industries from industries repository', this.prisma.industry.findMany())
     return this.prisma.industry.findMany();
   }
 }
