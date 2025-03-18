@@ -657,12 +657,31 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       try {
         // Process and generate a response
+        let fullResponse = '';
+        const startTime = Date.now();
+        let lastChunkTime = startTime;
+        let chunkCount = 0;
+
         for await (const step of await this.agent.stream(inputs, config)) {
           const lastMessage = step.messages[step.messages.length - 1];
           if (isAIMessage(lastMessage) && !lastMessage.tool_calls?.length) {
-            return lastMessage.content;
+            const now = Date.now();
+            chunkCount++;
+
+            console.log(
+              `Chunk #${chunkCount} received after ${now - lastChunkTime}ms`,
+            );
+            lastChunkTime = now;
+
+            fullResponse = lastMessage.content.toString();
           }
         }
+
+        const totalTime = Date.now() - startTime;
+        console.log(
+          `Total response time: ${totalTime}ms with ${chunkCount} chunks`,
+        );
+        return fullResponse;
       } catch (error) {
         console.error('Error processing prompt:', error);
         this.handleAgentError(error, userId);
