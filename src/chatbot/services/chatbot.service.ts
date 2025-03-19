@@ -622,72 +622,116 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     threadId: string,
     inputMessage: string,
     fileId: string,
+    onChunk?: (chunk: string) => void,
   ) {
-    await this.ensureInitialized();
+    try {
+      await this.ensureInitialized();
+      const thread = await this.validateThread(threadId);
 
-    const thread = await this.validateThread(threadId);
+      // Check if thread's title is empty
+      if (!thread.title) {
+        const titleResponse = await this.llm.invoke(
+          '**generate a concise title with this content:** ' + inputMessage,
+        );
+        const title = String(titleResponse.content).replace(/^"|"$/g, '');
+        await this.prisma.chatThread.update({
+          where: { id: threadId },
+          data: { title },
+        });
+      }
 
-    // Check if thread's title is empty
-    if (!thread.title) {
-      const titleResponse = await this.llm.invoke(
-        '**generate a concise title with this content:** ' + inputMessage,
-      );
-      const title = String(titleResponse.content).replace(/^"|"$/g, '');
-      await this.prisma.chatThread.update({
-        where: { id: threadId },
-        data: { title },
-      });
-    }
+      if (thread.chatType === ChatTypeEnum.CHAT_LAWYER) {
+        await this.chatLawyerService.sendMessage(
+          threadId,
+          { message: inputMessage, fileId },
+          userId,
+          UserTypeEnum.USER_COMPANY,
+        );
+      } else {
+        await this.initializeAgent(userId);
 
-    if (thread.chatType === ChatTypeEnum.CHAT_LAWYER) {
-      await this.chatLawyerService.sendMessage(
-        threadId,
-        { message: inputMessage, fileId },
-        userId,
-        UserTypeEnum.USER_COMPANY,
-      );
-    } else {
-      await this.initializeAgent(userId);
-
-      const config = {
-        configurable: { thread_id: threadId },
-        streamMode: 'values' as const,
-      };
-      const inputs = { messages: [{ role: 'user', content: inputMessage }] };
-
-      try {
-        // Process and generate a response
-        let fullResponse = '';
-        const startTime = Date.now();
-        let lastChunkTime = startTime;
-        let chunkCount = 0;
-
-        for await (const step of await this.agent.stream(inputs, config)) {
-          const lastMessage = step.messages[step.messages.length - 1];
-          if (isAIMessage(lastMessage) && !lastMessage.tool_calls?.length) {
-            const now = Date.now();
-            chunkCount++;
-
-            console.log(
-              `Chunk #${chunkCount} received after ${now - lastChunkTime}ms`,
-            );
-            lastChunkTime = now;
-
-            fullResponse = lastMessage.content.toString();
+        if (!this.agent) {
+          const error = new Error('Agent initialization failed');
+          console.error(error);
+          if (onChunk) {
+            throw error;
           }
+          return;
         }
 
-        const totalTime = Date.now() - startTime;
-        console.log(
-          `Total response time: ${totalTime}ms with ${chunkCount} chunks`,
-        );
-        return fullResponse;
-      } catch (error) {
-        console.error('Error processing prompt:', error);
-        this.handleAgentError(error, userId);
+        const config = {
+          configurable: { thread_id: threadId },
+          streamMode: 'values' as const,
+        };
+        const inputs = { messages: [{ role: 'user', content: inputMessage }] };
+
+        try {
+          let hasResponse = false;
+          let finalContent = '';
+          let inToolCallSequence = false;
+
+          for await (const step of await this.agent.stream(inputs, config)) {
+            const lastMessage = step.messages[step.messages.length - 1];
+
+            // Modified condition to handle different message types
+            if (isAIMessage(lastMessage)) {
+              if (lastMessage.tool_calls?.length) {
+                // If we have tool calls, log them but don't send to client
+                inToolCallSequence = true;
+                console.log(
+                  `Tool calls detected: ${JSON.stringify(lastMessage.tool_calls.map((tc) => tc.id))}`,
+                );
+                continue;
+              }
+
+              if (lastMessage.content) {
+                finalContent += lastMessage.content.toString();
+
+                // Only send actual content to the client
+                if (lastMessage.content && onChunk) {
+                  hasResponse = true;
+                  onChunk(lastMessage.content.toString());
+                } else if (onChunk) {
+                  hasResponse = true;
+                  onChunk(finalContent);
+                }
+              }
+            }
+          }
+
+          // If we went through the stream but never sent a response, that's an error condition
+          if (!hasResponse && onChunk) {
+            throw new Error('No response generated from the language model');
+          }
+        } catch (error) {
+          console.error('Error during agent streaming:', error);
+          this.handleAgentError(error, userId);
+          throw error;
+        }
+      }
+    } catch (error) {
+      console.error('Error processing prompt:', error);
+      // Only rethrow if we're in streaming mode (onChunk is provided)
+      if (onChunk) {
         throw error;
       }
     }
+  }
+
+  async streamPrompt(
+    userId: string,
+    threadId: string,
+    inputMessage: string,
+    fileId: string,
+    onChunk: (chunk: string) => void,
+  ) {
+    return await this.processPrompt(
+      userId,
+      threadId,
+      inputMessage,
+      fileId,
+      onChunk,
+    );
   }
 
   async getFilesByThread(thread_id: string, userId: string) {
