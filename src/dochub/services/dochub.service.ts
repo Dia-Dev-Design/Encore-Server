@@ -19,6 +19,7 @@ import dotenv from 'dotenv';
 import { v4 as uuidv4 } from 'uuid';
 import { FileType } from '@prisma/client';
 import { Document } from '@langchain/core/documents';
+import { S3Service } from 'src/s3/s3.service';
 dotenv.config();
 const { Pool } = pg;
 
@@ -30,7 +31,10 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
   private pgPool: pg.Pool | null = null;
   private initialized = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly s3Service: S3Service,
+  ) {}
 
   private async ensureInitialized() {
     if (this.initialized) return;
@@ -179,6 +183,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         fileName: doc.File.originalName,
         fileType: doc.File.fileType,
         fileSize: doc.File.size,
+        key: doc.File.key,
         mimeType: doc.File.mimeType,
         createdAt: doc.createdAt,
       }));
@@ -189,6 +194,73 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  async getUserDocument(documentId: string, res: any) {
+    try {
+      console.log(`Looking up document with ID: ${documentId}`);
+      const doc = await this.prisma.userDocument.findUnique({
+        where: {
+          id: documentId,
+          isActive: true,
+        },
+        include: {
+          File: true,
+        },
+      });
+
+      if (!doc) {
+        console.log(`Document not found with ID: ${documentId}`);
+        throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      }
+
+      console.log(
+        `Document found: ${JSON.stringify({
+          id: doc.id,
+          fileId: doc.fileId,
+          fileName: doc.File.originalName,
+          fileKey: doc.File.key,
+        })}`,
+      );
+      console.log(`Streaming file with key: ${doc.File.key}`);
+      await this.s3Service.getObjectStream(doc.File.key, res);
+      console.log('Successfully streamed document');
+    } catch (error) {
+      console.error('Error getting user document:', error);
+      throw new HttpException(
+        `Error getting user document: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async getUserDocumentsWithUrls(
+    userId: string,
+    page: number = 1,
+    limit: number = 10,
+  ) {
+    const skip = (page - 1) * limit;
+    const documents = await this.getUserDocuments(userId);
+    const paginatedDocuments = documents.slice(skip, skip + limit);
+    const totalCount = documents.length;
+    const keys = paginatedDocuments.map((doc) => doc.key);
+    const signedUrls = await this.s3Service.getSignedUrls(keys);
+    return {
+      data: paginatedDocuments.map((doc, index) => ({
+        name: doc.fileName,
+        id: doc.id,
+        type: doc.fileType,
+        url: signedUrls[index],
+        size: doc.fileSize,
+        createdAt: doc.createdAt,
+      })),
+      meta: {
+        totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+    };
   }
 
   async deleteUserDocument(userId: string, documentId: string) {

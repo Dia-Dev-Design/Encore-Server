@@ -1,15 +1,14 @@
 import {
-  Body,
   Controller,
   Post,
   Get,
   Delete,
   Param,
-  Query,
   UseInterceptors,
   UploadedFile,
   HttpException,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiResponse, ApiTags } from '@nestjs/swagger';
@@ -19,6 +18,8 @@ import { DocHubService } from '../services/dochub.service';
 import { S3Service } from 'src/s3/s3.service';
 import { CompaniesService } from 'src/companies/companies.service';
 import { FileType } from '@prisma/client';
+import { Response } from 'express';
+import { Public } from 'src/auth/decorators/public.decorator';
 
 @ApiTags('DocHub')
 @Controller('dochub')
@@ -92,6 +93,30 @@ export class DocHubController {
   })
   async getUserDocuments(@User() user: UserEntity) {
     return this.docHubService.getUserDocuments(user.id);
+  }
+
+  @Get('documents/with-urls')
+  @ApiBearerAuth()
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved user documents with signed URLs',
+  })
+  async getUserDocumentsWithUrls(@User() user: UserEntity) {
+    return this.docHubService.getUserDocumentsWithUrls(user.id);
+  }
+
+  @Get('documents/:id/stream')
+  @Public()
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully streamed document',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Document not found',
+  })
+  async getUserDocument(@Param('id') documentId: string, @Res() res: Response) {
+    return this.docHubService.getUserDocument(documentId, res);
   }
 
   @Delete('documents/:id')

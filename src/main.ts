@@ -52,7 +52,7 @@ async function bootstrap() {
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
   });
 
-  const port = config.port || 3000;
+  const port = config.port || 3001;
 
   SwaggerModule.setup('api/docs', app, document);
   await app.listen(port);
