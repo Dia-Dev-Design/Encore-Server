@@ -16,8 +16,6 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { PoolConfig } from 'pg';
 import pg from 'pg';
 import dotenv from 'dotenv';
-import { v4 as uuidv4 } from 'uuid';
-import { FileType } from '@prisma/client';
 import { Document } from '@langchain/core/documents';
 import { S3Service } from 'src/s3/s3.service';
 dotenv.config();
@@ -55,6 +53,25 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
       chunkSize: config.chunkSize,
       chunkOverlap: config.chunkOverlap,
     });
+
+    const config2 = {
+      postgresConnectionOptions: {
+        connectionString: process.env.DATABASE_URL,
+        ssl: {
+          rejectUnauthorized: false,
+        },
+      } as PoolConfig,
+      tableName: 'vectorstore',
+      columns: {
+        idColumnName: 'id',
+        vectorColumnName: 'embedding',
+        contentColumnName: 'content',
+        metadataColumnName: 'metadata',
+      },
+      distanceStrategy: 'cosine' as DistanceStrategy,
+    };
+
+    this.vectorStore = await PGVectorStore.initialize(this.embeddings, config2);
 
     this.initialized = true;
     console.log('DocHubService base components initialized');
@@ -97,61 +114,27 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      const config = {
-        postgresConnectionOptions: {
-          connectionString: process.env.DATABASE_URL,
-          ssl: {
-            rejectUnauthorized: false,
-          },
-        } as PoolConfig,
-        tableName: 'vectorstore',
-        columns: {
-          idColumnName: 'id',
-          vectorColumnName: 'embedding',
-          contentColumnName: 'content',
-          metadataColumnName: 'metadata',
-        },
-        distanceStrategy: 'cosine' as DistanceStrategy,
-      };
-
       const loader = new PDFLoader(new Blob([file]), {
         parsedItemSeparator: '',
       });
 
+      const docs = await loader.load();
+      const allSplits = await this.splitter.splitDocuments(docs);
+
+      allSplits.forEach((split) => {
+        split.metadata.file_id = fileId;
+        split.metadata.user_id = userId;
+      });
+
       try {
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-        }
-
-        this.vectorStore = await PGVectorStore.initialize(
-          this.embeddings,
-          config,
+        await this.vectorStore.addDocuments(allSplits);
+        return { success: true, documentCount: allSplits.length };
+      } catch (insertError) {
+        console.error(
+          'Error inserting documents into vector store:',
+          insertError,
         );
-
-        const docs = await loader.load();
-        const allSplits = await this.splitter.splitDocuments(docs);
-
-        allSplits.forEach((split) => {
-          split.metadata.file_id = fileId;
-          split.metadata.user_id = userId;
-        });
-
-        console.log(`Split document into ${allSplits.length} sub-documents.`);
-        try {
-          await this.vectorStore.addDocuments(allSplits);
-          return { success: true, documentCount: allSplits.length };
-        } catch (insertError) {
-          console.error(
-            'Error inserting documents into vector store:',
-            insertError,
-          );
-          throw new Error(`Error inserting: ${insertError.message}`);
-        }
-      } finally {
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-          this.vectorStore = null;
-        }
+        throw new Error(`Error inserting: ${insertError.message}`);
       }
     } catch (error) {
       console.error('Error processing document:', error);
@@ -198,7 +181,6 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
 
   async getUserDocument(documentId: string, res: any) {
     try {
-      console.log(`Looking up document with ID: ${documentId}`);
       const doc = await this.prisma.userDocument.findUnique({
         where: {
           id: documentId,
@@ -213,18 +195,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         console.log(`Document not found with ID: ${documentId}`);
         throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
       }
-
-      console.log(
-        `Document found: ${JSON.stringify({
-          id: doc.id,
-          fileId: doc.fileId,
-          fileName: doc.File.originalName,
-          fileKey: doc.File.key,
-        })}`,
-      );
-      console.log(`Streaming file with key: ${doc.File.key}`);
       await this.s3Service.getObjectStream(doc.File.key, res);
-      console.log('Successfully streamed document');
     } catch (error) {
       console.error('Error getting user document:', error);
       throw new HttpException(
@@ -234,11 +205,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async getUserDocumentsWithUrls(
-    userId: string,
-    page: number = 1,
-    limit: number = 10,
-  ) {
+  async getUserDocumentsWithUrls(userId: string, page: number, limit: number) {
     const skip = (page - 1) * limit;
     const documents = await this.getUserDocuments(userId);
     const paginatedDocuments = documents.slice(skip, skip + limit);
