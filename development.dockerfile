@@ -7,4 +7,4 @@ COPY package.json ./
 
 RUN npm install
 
-CMD npm migrate:deploy && npm start:dev
+CMD npm run migrate:deploy && npm run start:dev
