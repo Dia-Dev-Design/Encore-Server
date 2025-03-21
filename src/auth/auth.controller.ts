@@ -211,8 +211,9 @@ export class AuthController {
     description: 'Staff member authenticated successfully',
   })
   @ApiUnauthorizedResponse({ description: 'Invalid staff credentials' })
-  staffLogin(@Body() body: LoginDto) {
-    return this.authService.staffLogin(body);
+  async staffLogin(@Body() body: LoginDto) {
+    const response = await this.authService.staffLogin(body);
+    return response;
   }
 
   @Get('me')
