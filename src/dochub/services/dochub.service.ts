@@ -16,9 +16,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { PoolConfig } from 'pg';
 import pg from 'pg';
 import dotenv from 'dotenv';
-import { v4 as uuidv4 } from 'uuid';
-import { FileType } from '@prisma/client';
 import { Document } from '@langchain/core/documents';
+import { S3Service } from 'src/s3/s3.service';
 dotenv.config();
 const { Pool } = pg;
 
@@ -30,7 +29,10 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
   private pgPool: pg.Pool | null = null;
   private initialized = false;
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly s3Service: S3Service,
+  ) {}
 
   private async ensureInitialized() {
     if (this.initialized) return;
@@ -51,6 +53,25 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
       chunkSize: config.chunkSize,
       chunkOverlap: config.chunkOverlap,
     });
+
+    const config2 = {
+      postgresConnectionOptions: {
+        connectionString: process.env.DATABASE_URL,
+        ssl: {
+          rejectUnauthorized: false,
+        },
+      } as PoolConfig,
+      tableName: 'vectorstore',
+      columns: {
+        idColumnName: 'id',
+        vectorColumnName: 'embedding',
+        contentColumnName: 'content',
+        metadataColumnName: 'metadata',
+      },
+      distanceStrategy: 'cosine' as DistanceStrategy,
+    };
+
+    this.vectorStore = await PGVectorStore.initialize(this.embeddings, config2);
 
     this.initialized = true;
     console.log('DocHubService base components initialized');
@@ -93,61 +114,27 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      const config = {
-        postgresConnectionOptions: {
-          connectionString: process.env.DATABASE_URL,
-          ssl: {
-            rejectUnauthorized: false,
-          },
-        } as PoolConfig,
-        tableName: 'vectorstore',
-        columns: {
-          idColumnName: 'id',
-          vectorColumnName: 'embedding',
-          contentColumnName: 'content',
-          metadataColumnName: 'metadata',
-        },
-        distanceStrategy: 'cosine' as DistanceStrategy,
-      };
-
       const loader = new PDFLoader(new Blob([file]), {
         parsedItemSeparator: '',
       });
 
+      const docs = await loader.load();
+      const allSplits = await this.splitter.splitDocuments(docs);
+
+      allSplits.forEach((split) => {
+        split.metadata.file_id = fileId;
+        split.metadata.user_id = userId;
+      });
+
       try {
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-        }
-
-        this.vectorStore = await PGVectorStore.initialize(
-          this.embeddings,
-          config,
+        await this.vectorStore.addDocuments(allSplits);
+        return { success: true, documentCount: allSplits.length };
+      } catch (insertError) {
+        console.error(
+          'Error inserting documents into vector store:',
+          insertError,
         );
-
-        const docs = await loader.load();
-        const allSplits = await this.splitter.splitDocuments(docs);
-
-        allSplits.forEach((split) => {
-          split.metadata.file_id = fileId;
-          split.metadata.user_id = userId;
-        });
-
-        console.log(`Split document into ${allSplits.length} sub-documents.`);
-        try {
-          await this.vectorStore.addDocuments(allSplits);
-          return { success: true, documentCount: allSplits.length };
-        } catch (insertError) {
-          console.error(
-            'Error inserting documents into vector store:',
-            insertError,
-          );
-          throw new Error(`Error inserting: ${insertError.message}`);
-        }
-      } finally {
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-          this.vectorStore = null;
-        }
+        throw new Error(`Error inserting: ${insertError.message}`);
       }
     } catch (error) {
       console.error('Error processing document:', error);
@@ -179,6 +166,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         fileName: doc.File.originalName,
         fileType: doc.File.fileType,
         fileSize: doc.File.size,
+        key: doc.File.key,
         mimeType: doc.File.mimeType,
         createdAt: doc.createdAt,
       }));
@@ -189,6 +177,57 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  async getUserDocument(documentId: string, res: any) {
+    try {
+      const doc = await this.prisma.userDocument.findUnique({
+        where: {
+          id: documentId,
+          isActive: true,
+        },
+        include: {
+          File: true,
+        },
+      });
+
+      if (!doc) {
+        console.log(`Document not found with ID: ${documentId}`);
+        throw new HttpException('Document not found', HttpStatus.NOT_FOUND);
+      }
+      await this.s3Service.getObjectStream(doc.File.key, res);
+    } catch (error) {
+      console.error('Error getting user document:', error);
+      throw new HttpException(
+        `Error getting user document: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async getUserDocumentsWithUrls(userId: string, page: number, limit: number) {
+    const skip = (page - 1) * limit;
+    const documents = await this.getUserDocuments(userId);
+    const paginatedDocuments = documents.slice(skip, skip + limit);
+    const totalCount = documents.length;
+    const keys = paginatedDocuments.map((doc) => doc.key);
+    const signedUrls = await this.s3Service.getSignedUrls(keys);
+    return {
+      data: paginatedDocuments.map((doc, index) => ({
+        name: doc.fileName,
+        id: doc.id,
+        type: doc.fileType,
+        url: signedUrls[index],
+        size: doc.fileSize,
+        createdAt: doc.createdAt,
+      })),
+      meta: {
+        totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+    };
   }
 
   async deleteUserDocument(userId: string, documentId: string) {
