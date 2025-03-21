@@ -208,16 +208,25 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         },
       );
 
-      // Create a new pool
+      /**
+       * Database connection pool configuration optimized for Supabase free tier which has a hard limit of 10 concurrent connections.
+       *
+       * Performance vs Stability tradeoff:
+       * - Lower 'max' (3): Fewer concurrent DB operations but avoids connection errors
+       * - Zero 'min' (0): No idle connections kept open, slightly slower initial queries
+       * - Lower idle timeout: Releases unused connections faster to free up resources
+       *
+       * This should keep us under the 10-connection limit in development while maintaining reasonable performance.
+       */
       this.pgPool = new Pool({
         connectionString: process.env.DATABASE_URL,
         ssl: {
           rejectUnauthorized: false,
         },
-        max: 30, // maximum number of clients
-        min: 5, // keep some connections warm
-        idleTimeoutMillis: 60000, // close idle clients after 60 seconds
-        connectionTimeoutMillis: 2000, // return an error after 2 seconds if connection could not be established
+        max: 3,
+        min: 0,
+        idleTimeoutMillis: 10000,
+        connectionTimeoutMillis: 3000,
       });
 
       const checkpointSaver = new PostgresSaver(this.pgPool);
