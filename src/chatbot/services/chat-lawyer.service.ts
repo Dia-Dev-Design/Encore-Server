@@ -179,17 +179,34 @@ export class ChatLawyerService {
     });
     if (!userCompany) throw new NotFoundException('user not found');
 
-    //console.log({ userId });
     const isInChat = chat.userId === userId;
     if (!isInChat)
       throw new BadRequestException('you cant request a lawyer in this chat');
 
-    const lawyer = await this.prisma.staffUser.findFirst({
+    const lawyersWithChatCounts = await this.prisma.staffUser.findMany({
       where: { isLawyer: true },
+      select: {
+        id: true,
+        name: true,
+        _count: {
+          select: {
+            ChatLawyer: {
+              where: { status: ChatLawyerStatus.ACTIVE },
+            },
+          },
+        },
+      },
     });
 
-    //TODO por ahora no hay proceso de evaluacion, toda request se asigna(done) o falla
-    if (!lawyer) throw new BadRequestException('Uknow error');
+    if (lawyersWithChatCounts.length === 0) {
+      throw new BadRequestException('No lawyers available in the system');
+    }
+
+    const lawyer = lawyersWithChatCounts.reduce(
+      (min, current) =>
+        current._count.ChatLawyer < min._count.ChatLawyer ? current : min,
+      lawyersWithChatCounts[0],
+    );
 
     const company = await this.prisma.company.findFirst({
       where: {
@@ -197,7 +214,6 @@ export class ChatLawyerService {
       },
     });
 
-    //console.log({ company });
     if (!company)
       throw new BadRequestException('This is user isnt part of a company');
 
@@ -209,8 +225,6 @@ export class ChatLawyerService {
         },
         data: { status: ChatLawyerStatus.FINALIZED },
       });
-
-      //TODO update or change isReqLawyer in chat table
 
       const chatLawyer = await this.prisma.chatLawyer.create({
         data: {
@@ -251,7 +265,13 @@ export class ChatLawyerService {
         data: { chatType: ChatTypeEnum.CHAT_LAWYER },
       });
 
-      //create task
+      await this.prisma.lawyerUsers.create({
+        data: {
+          userId: userId,
+          lawyerId: lawyer.id,
+          chatId: chatThreadId,
+        },
+      });
 
       await this.prisma.task.createMany({
         data: {
