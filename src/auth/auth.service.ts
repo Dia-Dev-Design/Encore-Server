@@ -201,7 +201,10 @@ export class AuthService {
       user: staffUser,
       isAdmin: true,
     };
+<<<<<<< HEAD
     console.log('This is staffuser responsexxxxxxxxx>>>>', response);
+=======
+>>>>>>> 1565340a5e1fdc056f590912b7b32137264e5878
     return response;
   }
 }

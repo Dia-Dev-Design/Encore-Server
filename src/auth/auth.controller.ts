@@ -211,12 +211,23 @@ export class AuthController {
     summary: 'Staff login',
     description: 'Login for staff members',
   })
+<<<<<<< HEAD
   @ApiBody({ type: LoginDto })
   @ApiOkResponse({ description: 'Staff login successful' })
   @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
   async staffLogin(@Body() loginDto: LoginDto) {
     console.log('Login endpoint reached!'); // Add this to verify if the method is reached
     return this.authService.staffLogin(loginDto);
+=======
+  @ApiCreatedResponse({
+    type: Auth,
+    description: 'Staff member authenticated successfully',
+  })
+  @ApiUnauthorizedResponse({ description: 'Invalid staff credentials' })
+  async staffLogin(@Body() body: LoginDto) {
+    const response = await this.authService.staffLogin(body);
+    return response;
+>>>>>>> 1565340a5e1fdc056f590912b7b32137264e5878
   }
 
   @Get('me')
