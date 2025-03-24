@@ -8,6 +8,7 @@ export class UserEntity implements User {
   phoneNumber: string;
   lastPasswordChange: Date;
   isVerified: boolean;
+  isAdmin: boolean;
   createdAt: Date;
   updatedAt: Date;
 

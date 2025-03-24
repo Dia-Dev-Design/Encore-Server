@@ -43,7 +43,7 @@ export interface Config {
 }
 
 export default (): Config => ({
-  port: parseInt(process.env.PORT, 10) || 3000,
+  port: parseInt(process.env.PORT, 10) || 8080,
   frontendUrl: process.env.FRONTEND_URL || 'https://dev.startupencore.ai',
   database: {
     connectionString: process.env.DATABASE_URL,
@@ -75,7 +75,7 @@ export default (): Config => ({
     redirectUrl: process.env.GOOGLE_REDIRECT_URL,
   },
   langchain: {
-    openAiApiKey: process.env.OPENAI_API_KEY,
+    openAiApiKey: '',
     chatModel: process.env.LANGCHAIN_CHAT_MODEL,
   },
   s3: {

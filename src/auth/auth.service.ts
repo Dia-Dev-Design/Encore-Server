@@ -50,6 +50,7 @@ export class AuthService {
       accessToken: this.jwtService.sign({
         userId: newUser.id,
         email: newUser.email,
+        isAdmin: newUser.isAdmin,
       }),
       user: newUser,
     };
@@ -71,6 +72,7 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
+    // console.log('')
     const user = await this.userService.findByEmail(loginDto.email);
     if (!user) {
       throw new NotFoundException('User not found');
@@ -81,8 +83,13 @@ export class AuthService {
     }
 
     return {
-      accessToken: this.jwtService.sign({ userId: user.id, email: user.email }),
+      accessToken: this.jwtService.sign({
+        userId: user.id,
+        email: user.email,
+        isAdmin: false,
+      }),
       user: user,
+      isAdmin: false,
     };
   }
 
@@ -160,21 +167,23 @@ export class AuthService {
     await this.userService.deleteVerificationToken(userToken.id);
   }
 
-  async googleLogin(req: Request, res: Response) {
-    console.log(req);
-    if (!req.user) {
-      return res.status(401).json({ message: 'No user from Google' });
-    }
+  // async googleLogin(req: Request, res: Response) {
+  //   console.log(req);
+  //   if (!req.user) {
+  //     return res.status(401).json({ message: 'No user from Google' });
+  //   }
 
-    const frontendUrl = this.configService.get('frontendUrl');
-    const token = (req.user as any).accessToken;
-    const redirectUrl = `${frontendUrl}/auth/redirect?token=${encodeURIComponent(token)}`;
+  //   const frontendUrl = this.configService.get('frontendUrl');
+  //   const token = (req.user as any).accessToken;
+  //   const redirectUrl = `${frontendUrl}/auth/redirect?token=${encodeURIComponent(token)}`;
 
-    return res.redirect(redirectUrl);
-  }
+  //   return res.redirect(redirectUrl);
+  // }
 
   async staffLogin(loginDto: LoginDto) {
+    console.log('We are hitting==========> STAFFLOGIN');
     const staffUser = await this.staffUserService.findByEmail(loginDto.email);
+    console.log('This is staffUser +++++++++>', staffUser);
     if (!staffUser) {
       throw new NotFoundException('Staff user not found');
     }
@@ -183,12 +192,16 @@ export class AuthService {
       throw new UnauthorizedException('Invalid password');
     }
 
-    return {
+    const response = {
       accessToken: this.jwtService.sign({
         userId: staffUser.id,
         email: staffUser.email,
+        isAdmin: true,
       }),
       user: staffUser,
+      isAdmin: true,
     };
+    console.log('This is staffuser responsexxxxxxxxx>>>>', response);
+    return response;
   }
 }

@@ -7,6 +7,8 @@ import {
   Req,
   Res,
   UseGuards,
+  UnauthorizedException,
+  NotFoundException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import {
@@ -19,6 +21,7 @@ import {
   ApiOperation,
   ApiQuery,
   ApiBearerAuth,
+  ApiBody,
 } from '@nestjs/swagger';
 import { LoginDto } from './dto/login.dto';
 import { Auth } from './entities/auth.entity';
@@ -36,6 +39,7 @@ import { StaffUserService } from 'src/user/services/staff-service-user.service';
 import { UserService } from 'src/user/services/user.service';
 import { StaffAuth } from './decorators/staff-auth.decorator';
 import { use } from 'passport';
+import { Response } from 'express';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -62,6 +66,7 @@ export class AuthController {
     description: 'Invalid email or password combination',
   })
   login(@Body() body: LoginDto) {
+    console.log('We hav hit login this body+++>', body);
     return this.authService.login(body);
   }
 
@@ -176,43 +181,42 @@ export class AuthController {
     return this.authService.verifyEmail(decodedToken);
   }
 
-  @Get('google')
-  @Public()
-  @UseGuards(GoogleGuard)
-  @ApiOperation({
-    summary: 'Google OAuth',
-    description: 'Initiate Google OAuth authentication flow',
-  })
-  @ApiOkResponse({ description: 'Redirected to Google login' })
-  googleAuth() {
-    // Guard handles the authentication
-  }
+  // @Get('google')
+  // @Public()
+  // @UseGuards(GoogleGuard)
+  // @ApiOperation({
+  //   summary: 'Google OAuth',
+  //   description: 'Initiate Google OAuth authentication flow',
+  // })
+  // @ApiOkResponse({ description: 'Redirected to Google login' })
+  // googleAuth() {
+  //   // Guard handles the authentication
+  // }
 
-  @Get('google/redirect')
-  @Public()
-  @UseGuards(GoogleGuard)
-  @ApiOperation({
-    summary: 'Google OAuth callback',
-    description: 'Handle the Google OAuth callback and authenticate user',
-  })
-  @ApiOkResponse({ description: 'Successfully authenticated with Google' })
-  async googleAuthRedirect(@Req() req, @Res() res) {
-    return this.authService.googleLogin(req, res);
-  }
+  // @Get('google/redirect')
+  // @Public()
+  // @UseGuards(GoogleGuard)
+  // @ApiOperation({
+  //   summary: 'Google OAuth callback',
+  //   description: 'Handle the Google OAuth callback and authenticate user',
+  // })
+  // @ApiOkResponse({ description: 'Successfully authenticated with Google' })
+  // async googleAuthRedirect(@Req() req, @Res() res) {
+  //   return this.authService.googleLogin(req, res);
+  // }
 
   @Post('admin/login')
-  @Public()
+  // NO @UseGuards() HERE!
   @ApiOperation({
     summary: 'Staff login',
-    description: 'Authenticate staff member and return JWT access token',
+    description: 'Login for staff members',
   })
-  @ApiCreatedResponse({
-    type: Auth,
-    description: 'Staff member authenticated successfully',
-  })
-  @ApiUnauthorizedResponse({ description: 'Invalid staff credentials' })
-  staffLogin(@Body() body: LoginDto) {
-    return this.authService.staffLogin(body);
+  @ApiBody({ type: LoginDto })
+  @ApiOkResponse({ description: 'Staff login successful' })
+  @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
+  async staffLogin(@Body() loginDto: LoginDto) {
+    console.log('Login endpoint reached!'); // Add this to verify if the method is reached
+    return this.authService.staffLogin(loginDto);
   }
 
   @Get('me')
@@ -224,12 +228,24 @@ export class AuthController {
   })
   @ApiOkResponse({ description: 'User information retrieved successfully' })
   @ApiUnauthorizedResponse({ description: 'Invalid or expired token' })
-  getUserInfo(@User() user: UserJwtPayload) {
-    return this.userService.getUser(user);
+  getUserInfo(@Req() req) {
+    return this.userService.getUser(req.user);
   }
 
+  // @Get('admin/me')
+  // @StaffAuth()
+  // @UseGuards(StaffJwtAuthGuard)
+  // @ApiBearerAuth()
+  // @ApiOperation({
+  //   summary: 'Get staff info',
+  //   description: "Retrieve authenticated staff member's information",
+  // })
+  // @ApiOkResponse({ description: 'Staff information retrieved successfully' })
+  // @ApiUnauthorizedResponse({ description: 'Invalid or expired staff token' })
+  // getStaffUserInfo(@User() user: StaffJwtPayload) {
+  //   return this.staffUserService.findById(user.id);
+  // }
   @Get('admin/me')
-  @StaffAuth()
   @UseGuards(StaffJwtAuthGuard)
   @ApiBearerAuth()
   @ApiOperation({
@@ -238,7 +254,17 @@ export class AuthController {
   })
   @ApiOkResponse({ description: 'Staff information retrieved successfully' })
   @ApiUnauthorizedResponse({ description: 'Invalid or expired staff token' })
-  getStaffUserInfo(@User() user: StaffJwtPayload) {
-    return this.staffUserService.findById(user.id);
+  getStaffUserInfo(@Req() req, @Res({ passthrough: true }) res: Response) {
+    // Disable caching for this endpoint
+    res.setHeader(
+      'Cache-Control',
+      'no-store, no-cache, must-revalidate, proxy-revalidate',
+    );
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
+
+    console.log('Admin/me endpoint reached with user:', req.user);
+    return this.staffUserService.findById(req.user.id);
   }
 }

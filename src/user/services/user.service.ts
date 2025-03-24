@@ -30,6 +30,7 @@ export class UserService {
       password: hashedPassword,
       lastPasswordChange: null,
       isVerified: false,
+      isAdmin: false,
       name: null,
       phoneNumber: null,
     });
@@ -46,6 +47,7 @@ export class UserService {
       password: hashedPassword,
       lastPasswordChange: null,
       isVerified: true,
+      isAdmin: false,
       phoneNumber: null,
     });
   }
@@ -62,8 +64,17 @@ export class UserService {
       (company) => company.hasCompletedSetup,
     );
 
-    return {
+    // Add the isAdmin property to the user object
+    // This assumes you're either:
+    // 1. Getting this from a database field that wasn't included in your initial query
+    // 2. Setting a default value
+    const userWithAdmin = {
       ...user,
+      // isAdmin: user.isAdmin || false, // Use existing value or default to false
+    };
+
+    return {
+      ...userWithAdmin,
       hasRegisteredCompanies: hasCompletedSetup,
       companies: userCompanies,
     };
