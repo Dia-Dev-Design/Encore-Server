@@ -29,26 +29,27 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RequestResetPasswordDto } from './dto/request-reset-password.dto';
 import { JwtAuthGuard } from './auth.guard';
 import { CreateUserDto } from 'src/user/dto/create-user.dto';
-import { GoogleGuard } from './google.guard';
+// import { GoogleGuard } from './google.guard';
 import { Public } from './decorators/public.decorator';
 import { User } from './decorators/user.decorator';
 import { UserEntity } from 'src/user/entities/user.entity';
+
 import { StaffJwtPayload, UserJwtPayload } from './types/jwt-payload.types';
 import { StaffJwtAuthGuard } from './staff-auth.guard';
 import { StaffUserService } from 'src/user/services/staff-service-user.service';
-import { UserService } from 'src/user/services/user.service';
 import { StaffAuth } from './decorators/staff-auth.decorator';
-import { use } from 'passport';
-import { Response } from 'express';
+import { Request, Response } from 'express';
+import { UserService } from '../user/services/user.service';
 
-@ApiTags('auth')
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly userService: UserService,
     private readonly staffUserService: StaffUserService,
-  ) {}
+  ) {
+    console.log('AuthService intialized');
+  }
 
   @Post('login')
   @Public()
@@ -181,53 +182,24 @@ export class AuthController {
     return this.authService.verifyEmail(decodedToken);
   }
 
-  // @Get('google')
-  // @Public()
-  // @UseGuards(GoogleGuard)
-  // @ApiOperation({
-  //   summary: 'Google OAuth',
-  //   description: 'Initiate Google OAuth authentication flow',
-  // })
-  // @ApiOkResponse({ description: 'Redirected to Google login' })
-  // googleAuth() {
-  //   // Guard handles the authentication
-  // }
-
-  // @Get('google/redirect')
-  // @Public()
-  // @UseGuards(GoogleGuard)
-  // @ApiOperation({
-  //   summary: 'Google OAuth callback',
-  //   description: 'Handle the Google OAuth callback and authenticate user',
-  // })
-  // @ApiOkResponse({ description: 'Successfully authenticated with Google' })
-  // async googleAuthRedirect(@Req() req, @Res() res) {
-  //   return this.authService.googleLogin(req, res);
-  // }
-
   @Post('admin/login')
-  // NO @UseGuards() HERE!
   @ApiOperation({
     summary: 'Staff login',
     description: 'Login for staff members',
   })
-<<<<<<< HEAD
   @ApiBody({ type: LoginDto })
   @ApiOkResponse({ description: 'Staff login successful' })
   @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
   async staffLogin(@Body() loginDto: LoginDto) {
-    console.log('Login endpoint reached!'); // Add this to verify if the method is reached
-    return this.authService.staffLogin(loginDto);
-=======
-  @ApiCreatedResponse({
-    type: Auth,
-    description: 'Staff member authenticated successfully',
-  })
-  @ApiUnauthorizedResponse({ description: 'Invalid staff credentials' })
-  async staffLogin(@Body() body: LoginDto) {
-    const response = await this.authService.staffLogin(body);
-    return response;
->>>>>>> 1565340a5e1fdc056f590912b7b32137264e5878
+    console.log('✅ staffLogin method reached with payload:', loginDto);
+    try {
+      const result = await this.authService.staffLogin(loginDto);
+      console.log('✅ Staff login successful');
+      return result;
+    } catch (error) {
+      console.error('❌ Staff login error:', error);
+      throw error;
+    }
   }
 
   @Get('me')
@@ -239,23 +211,13 @@ export class AuthController {
   })
   @ApiOkResponse({ description: 'User information retrieved successfully' })
   @ApiUnauthorizedResponse({ description: 'Invalid or expired token' })
-  getUserInfo(@Req() req) {
-    return this.userService.getUser(req.user);
+  async getUserInfo(
+    @User() user: UserJwtPayload,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return await this.userService.getUser(user);
   }
 
-  // @Get('admin/me')
-  // @StaffAuth()
-  // @UseGuards(StaffJwtAuthGuard)
-  // @ApiBearerAuth()
-  // @ApiOperation({
-  //   summary: 'Get staff info',
-  //   description: "Retrieve authenticated staff member's information",
-  // })
-  // @ApiOkResponse({ description: 'Staff information retrieved successfully' })
-  // @ApiUnauthorizedResponse({ description: 'Invalid or expired staff token' })
-  // getStaffUserInfo(@User() user: StaffJwtPayload) {
-  //   return this.staffUserService.findById(user.id);
-  // }
   @Get('admin/me')
   @UseGuards(StaffJwtAuthGuard)
   @ApiBearerAuth()
@@ -265,7 +227,10 @@ export class AuthController {
   })
   @ApiOkResponse({ description: 'Staff information retrieved successfully' })
   @ApiUnauthorizedResponse({ description: 'Invalid or expired staff token' })
-  getStaffUserInfo(@Req() req, @Res({ passthrough: true }) res: Response) {
+  getStaffUserInfo(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     // Disable caching for this endpoint
     res.setHeader(
       'Cache-Control',
@@ -276,6 +241,6 @@ export class AuthController {
     res.setHeader('Surrogate-Control', 'no-store');
 
     console.log('Admin/me endpoint reached with user:', req.user);
-    return this.staffUserService.findById(req.user.id);
+    return this.staffUserService.findById((req.user as StaffJwtPayload).id);
   }
 }

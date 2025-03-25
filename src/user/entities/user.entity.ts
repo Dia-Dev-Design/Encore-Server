@@ -8,10 +8,9 @@ export class UserEntity implements User {
   phoneNumber: string;
   lastPasswordChange: Date;
   isVerified: boolean;
-  isAdmin: boolean;
   createdAt: Date;
   updatedAt: Date;
-
+  isAdmin: boolean;
   constructor(partial: Partial<UserEntity>) {
     Object.assign(this, partial);
   }

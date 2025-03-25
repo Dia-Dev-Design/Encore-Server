@@ -22,17 +22,15 @@ export class UserService {
 
   async registerUser(user: CreateUserDto) {
     const { password: plainPassword, ...rest } = user;
-
     const hashedPassword = await hash(plainPassword, 10);
-
     return this.userRepository.create({
       ...rest,
       password: hashedPassword,
       lastPasswordChange: null,
       isVerified: false,
-      isAdmin: false,
       name: null,
       phoneNumber: null,
+      isAdmin: false,
     });
   }
 
@@ -41,14 +39,13 @@ export class UserService {
   ) {
     const password = v4();
     const hashedPassword = await hash(password, 10);
-
     return this.userRepository.create({
       ...user,
       password: hashedPassword,
       lastPasswordChange: null,
       isVerified: true,
-      isAdmin: false,
       phoneNumber: null,
+      isAdmin: false,
     });
   }
 

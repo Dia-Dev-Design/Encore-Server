@@ -17,10 +17,7 @@ model StaffUser {
   createdAt                DateTime              @default(now())
   updatedAt                DateTime              @updatedAt
   isLawyer                 Boolean               @default(false)
-<<<<<<< HEAD
   isAdmin                  Boolean               @default(true)
-=======
->>>>>>> 1565340a5e1fdc056f590912b7b32137264e5878
   ChatLawyer               ChatLawyer[]
   ChatLawyerMessage        ChatLawyerMessage[]
   Company                  Company[]
@@ -41,10 +38,7 @@ model User {
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   isVerified          Boolean               @default(false)
-<<<<<<< HEAD
   isAdmin             Boolean               @default(false)
-=======
->>>>>>> 1565340a5e1fdc056f590912b7b32137264e5878
   ChatCategories      ChatCategory[]
   ChatLawyer          ChatLawyer[]
   ChatLawyerMessage   ChatLawyerMessage[]

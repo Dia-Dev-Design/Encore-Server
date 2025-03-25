@@ -4,6 +4,8 @@ import {
   Injectable,
   OnModuleDestroy,
   OnModuleInit,
+  BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { OpenAIEmbeddings, ChatOpenAI } from '@langchain/openai';
@@ -37,6 +39,8 @@ import {
   ChatTypeEnum,
 } from '../enums/chatbot.enum';
 import { DocHubService } from 'src/dochub/services/dochub.service';
+import { Prisma } from '@prisma/client';
+
 dotenv.config();
 const { Pool } = pg;
 
@@ -74,7 +78,8 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     const config = {
       model: process.env.LANGCHAIN_CHAT_MODEL || 'gpt-3.5-turbo',
       temperature: 0,
-      apiKey: '',
+      apiKey:
+        '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',
       streaming: true,
       embeddingModel: 'text-embedding-3-small',
       chunkSize: 1000,
@@ -231,8 +236,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
           return trimMessages(
             [
               new SystemMessage(
-                `
-                You are a highly skilled legal assistant with in-depth knowledge of laws and regulations.
+                `You are a highly skilled legal assistant with in-depth knowledge of laws and regulations.
                 Your goal is to provide your answer with clear, concise, and accurate answers to legal inquiries, ensuring that your responses are appropriate, ethically responsible, and aligned with local laws and international legal principles. You offer support in general legal areas such as contracts, civil rights, property, legal disputes, and more. While you are an expert in law, you always emphasize that the information provided does not substitute for the advice of a qualified attorney for complex or specific matters
                 The user may require specific information and relevant context, which should first be retrieved using the **retrieve tool**.
                 Always use this tool if available before answering to ensure accuracy and completeness in your response. 
@@ -749,23 +753,51 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
   async createThread(userId: string) {
     try {
-      const thread = await this.prisma.chatThread.create({
-        data: {
-          userId: userId,
-        },
-      });
-      const userCompany = await this.prisma.userCompany.findFirst({
-        where: { userId },
-      });
-
-      if (!userCompany) {
-        throw new HttpException(
-          `User Company not found: ${userId}`,
-          HttpStatus.NOT_FOUND,
+      // First, make sure userId is not undefined or empty
+      if (!userId) {
+        throw new BadRequestException(
+          'User ID is required to create a chat thread',
         );
       }
 
-      const chatCompany = await this.prisma.chatCompany.upsert({
+      console.log('Creating thread for user ID:', userId); // Add debugging
+
+      const thread = await this.prisma.chatThread.create({
+        data: {
+          User: {
+            connect: {
+              id: userId,
+            },
+          },
+        },
+      });
+
+      console.log('Thread created:', thread); // Add debugging
+      return thread;
+    } catch (error) {
+      // Handle error appropriately
+      console.error('Error creating chat thread:', error);
+
+      // Provide a more descriptive error message
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === 'P2025') {
+          throw new NotFoundException(`User with ID ${userId} not found`);
+        }
+      }
+
+      throw new HttpException(
+        `Error creating chat thread: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  async chatCompany(
+    userCompany: { companyId: string },
+    thread: { id: string },
+  ) {
+    try {
+      const chatCompanyRecord = await this.prisma.chatCompany.upsert({
         where: {
           companyId: userCompany.companyId,
         },
@@ -778,7 +810,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       await this.prisma.chatThread.update({
         where: { id: thread.id },
-        data: { chatCompanyId: chatCompany.id },
+        data: { chatCompanyId: chatCompanyRecord.id },
       });
 
       return thread;
