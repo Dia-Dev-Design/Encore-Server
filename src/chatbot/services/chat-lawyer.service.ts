@@ -56,7 +56,11 @@ export class ChatLawyerService {
     let userCompany = null;
     let userStaff = null;
     let isInChat = false;
-    if (userType === UserTypeEnum.USER_COMPANY) {
+    console.log('userType', userType);
+    if (
+      userType === UserTypeEnum.USER_COMPANY ||
+      userType === UserTypeEnum.USER_LAWYER
+    ) {
       userCompany = await this.prisma.user.findFirst({ where: { id: userId } });
       console.log({ userCompany });
       if (!userCompany) throw new NotFoundException('user not found');
@@ -68,9 +72,30 @@ export class ChatLawyerService {
       userStaff = await this.prisma.staffUser.findFirst({
         where: { id: userId },
       });
+
+      console.log({ userStaff });
       if (!userStaff) throw new NotFoundException('user not found');
 
-      isInChat = true;
+      // For admin users, always allow access
+      if (userStaff.isLawyer === true) {
+        isInChat = true;
+        console.log(
+          `Admin user ${userStaff.name} (${userId}) granted SSE access to chat ${chatThreadId}`,
+        );
+      } else {
+        // For regular staff, check for active relation
+        const chatLawyer = await this.prisma.chatLawyer.findFirst({
+          where: {
+            ChatThreadId: chatThreadId,
+            lawyerId: userStaff.id,
+            status: ChatLawyerStatus.ACTIVE,
+          },
+        });
+
+        if (chatLawyer) {
+          isInChat = true;
+        }
+      }
     }
 
     //console.log({ isInChat });
@@ -98,6 +123,7 @@ export class ChatLawyerService {
     let isInChat = false;
     let userResponseId = null;
     let userResponseName = null;
+    let isAdmin = false;
 
     if (userType === UserTypeEnum.USER_COMPANY) {
       userCompany = await this.prisma.user.findFirst({ where: { id: userId } });
@@ -115,14 +141,26 @@ export class ChatLawyerService {
       });
       if (!userStaff) throw new NotFoundException('user not found');
 
-      const chatLawyer = await this.prisma.chatLawyer.findFirst({
-        where: {
-          ChatThreadId: chatThreadId,
-          lawyerId: userStaff.id,
-          status: ChatLawyerStatus.ACTIVE,
-        },
-      });
-      if (chatLawyer) isInChat = true;
+      // Check if user is an admin
+      isAdmin = userStaff.isAdmin === true;
+
+      // For admins, always allow access to chat
+      if (isAdmin) {
+        isInChat = true;
+        console.log(
+          `Admin user ${userStaff.name} (${userId}) granted access to chat ${chatThreadId}`,
+        );
+      } else {
+        // For regular lawyers, check for an active ChatLawyer record
+        const chatLawyer = await this.prisma.chatLawyer.findFirst({
+          where: {
+            ChatThreadId: chatThreadId,
+            lawyerId: userStaff.id,
+            status: ChatLawyerStatus.ACTIVE,
+          },
+        });
+        if (chatLawyer) isInChat = true;
+      }
 
       userResponseId = userStaff.id;
       userResponseName = userStaff.name;
@@ -134,6 +172,47 @@ export class ChatLawyerService {
       throw new BadRequestException('you cant send a message in this chat');
 
     //-----
+
+    // If admin is messaging for the first time, create a ChatLawyer record
+    if (isAdmin && userStaff) {
+      // Check if there's already any ChatLawyer record for this thread
+      const existingChatLawyer = await this.prisma.chatLawyer.findFirst({
+        where: {
+          ChatThreadId: chatThreadId,
+          lawyerId: userStaff.id,
+        },
+      });
+
+      // If no record exists, create one
+      if (!existingChatLawyer) {
+        console.log(
+          `Creating ChatLawyer record for admin ${userStaff.name} in chat ${chatThreadId}`,
+        );
+
+        try {
+          await this.prisma.chatLawyer.create({
+            data: {
+              ChatThreadId: chatThreadId,
+              lawyerId: userStaff.id,
+              status: ChatLawyerStatus.ACTIVE,
+              statusRequest: ChatbotLawyerReqStatusEnum.done,
+              userRequestId: chat.userId, // Use the chat owner as requester
+            },
+          });
+
+          // Ensure chat is marked as lawyer chat type
+          if (chat.chatType !== ChatTypeEnum.CHAT_LAWYER) {
+            await this.prisma.chatThread.update({
+              where: { id: chatThreadId },
+              data: { chatType: ChatTypeEnum.CHAT_LAWYER },
+            });
+          }
+        } catch (error) {
+          console.error('Error creating ChatLawyer record:', error);
+          // Continue anyway - don't block the message
+        }
+      }
+    }
 
     const newMessageData: Prisma.ChatLawyerMessageCreateArgs = {
       data: {
@@ -297,6 +376,110 @@ export class ChatLawyerService {
       throw new BadRequestException(`Error : ${error.message}`);
     }
   }
+
+  async sendAdminMessage(
+    chatThreadId: string,
+    payload: CreateMessageForChatLawyerDto,
+    adminUserId: string,
+  ) {
+    console.log(
+      `Processing admin message for thread ${chatThreadId} from user ${adminUserId}`,
+    );
+
+    // Get the chat thread
+    const chat = await this.prisma.chatThread.findFirst({
+      where: { id: chatThreadId },
+    });
+
+    if (!chat) {
+      console.error(`Chat thread ${chatThreadId} not found`);
+      throw new NotFoundException('chat not found');
+    }
+
+    // Get admin user info - no permission checks, we assume this is an admin
+    const adminUser = await this.prisma.staffUser.findFirst({
+      where: { id: adminUserId },
+    });
+
+    if (!adminUser) {
+      console.log(`Admin user ${adminUserId} not found, using default name`);
+      // Continue anyway with a default name
+    }
+
+    const userName = adminUser?.name || 'Admin';
+    console.log(`Sending message as ${userName}`);
+
+    try {
+      // Ensure the chat is marked as lawyer chat type
+      if (chat.chatType !== ChatTypeEnum.CHAT_LAWYER) {
+        await this.prisma.chatThread.update({
+          where: { id: chatThreadId },
+          data: { chatType: ChatTypeEnum.CHAT_LAWYER },
+        });
+      }
+
+      // Create or update ChatLawyer record linking admin to this chat
+      const existingChatLawyer = await this.prisma.chatLawyer.findFirst({
+        where: {
+          ChatThreadId: chatThreadId,
+          lawyerId: adminUserId,
+        },
+      });
+
+      if (!existingChatLawyer) {
+        await this.prisma.chatLawyer.create({
+          data: {
+            ChatThreadId: chatThreadId,
+            lawyerId: adminUserId,
+            status: ChatLawyerStatus.ACTIVE,
+            statusRequest: ChatbotLawyerReqStatusEnum.done,
+            userRequestId: chat.userId,
+          },
+        });
+      }
+
+      // Create the message
+      const newMessage = await this.prisma.chatLawyerMessage.create({
+        data: {
+          content: payload.message,
+          userMessageType: UserTypeEnum.USER_STAFF,
+          ChatThreadId: chatThreadId,
+          lawyerId: adminUserId,
+          userId: chat.userId,
+          fileId: payload.fileId,
+        },
+      });
+
+      // Create the SSE message
+      const message: MessageForChatLawyerDto = {
+        type: ChatTypeEnum.CHAT_LAWYER,
+        message: {
+          content: payload.message,
+          id: newMessage.id,
+          fileId: payload.fileId,
+          createdAt: newMessage.createdAt,
+          updatedAt: newMessage.updatedAt,
+          user: {
+            id: adminUserId,
+            typeUser: UserTypeEnum.USER_STAFF,
+            name: userName,
+          },
+        },
+      };
+
+      // Send the SSE event
+      this.sendSSE(message, chatThreadId);
+
+      return {
+        success: true,
+        message: newMessage,
+      };
+    } catch (error) {
+      console.error('Error sending admin message:', error);
+      throw new BadRequestException(`Error sending message: ${error.message}`);
+    }
+  }
+
   //send a message to chat-<chatThreadId>
   private sendSSE(message: any, chatThreadId: string) {
     //console.log({ message, chatThreadId });
