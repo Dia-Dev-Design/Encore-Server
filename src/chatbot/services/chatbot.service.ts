@@ -223,10 +223,10 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         ssl: {
           rejectUnauthorized: false,
         },
-        max: 3,
+        max: 2,
         min: 0,
-        idleTimeoutMillis: 10000,
-        connectionTimeoutMillis: 3000,
+        idleTimeoutMillis: 5000,
+        connectionTimeoutMillis: 5000,
       });
 
       const checkpointSaver = new PostgresSaver(this.pgPool);
