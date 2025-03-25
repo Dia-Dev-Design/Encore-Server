@@ -75,8 +75,7 @@ export default (): Config => ({
     redirectUrl: process.env.GOOGLE_REDIRECT_URL,
   },
   langchain: {
-    openAiApiKey:
-      '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',
+    openAiApiKey: process.env.OPENAI_API_KEY,
     chatModel: process.env.LANGCHAIN_CHAT_MODEL,
   },
   s3: {

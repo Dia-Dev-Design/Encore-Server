@@ -78,12 +78,11 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     const config = {
       model: process.env.LANGCHAIN_CHAT_MODEL || 'gpt-3.5-turbo',
       temperature: 0,
-      apiKey:
-        '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',
-      streaming: true,
+      apiKey: process.env.OPENAI_API_KEY,
       embeddingModel: 'text-embedding-3-small',
       chunkSize: 1000,
       chunkOverlap: 200,
+      streaming: true,
     };
 
     this.llm = new ChatOpenAI({
