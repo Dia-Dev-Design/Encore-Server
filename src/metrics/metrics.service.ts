@@ -119,15 +119,40 @@ export class MetricsService {
         return 0;
       }
       const threadIds = threads.map((thread) => thread.id);
-      const count = await this.prismaService.checkpoint.count({
+      const checkpoints = await this.prismaService.checkpoint.findMany({
         where: {
           thread_id: { in: threadIds },
         },
+        select: {
+          metadata: true,
+        },
       });
 
-      return count;
+      let aiResponseCount = 0;
+      for (const checkpoint of checkpoints) {
+        const metadata = checkpoint.metadata as {
+          writes?: {
+            agent?: {
+              messages?: Array<{ id: string[]; kwargs: { content: string } }>;
+            };
+            __start__?: {
+              messages?: Array<{ id: string[]; kwargs: { content: string } }>;
+            };
+          };
+        };
+
+        const agentMessages = metadata?.writes?.agent?.messages ?? [];
+        const startMessages = metadata?.writes?.__start__?.messages ?? [];
+        const allMessages = [...agentMessages, ...startMessages];
+
+        aiResponseCount += allMessages.filter(
+          (msg) => msg.kwargs?.content && !msg.id?.includes('HumanMessage'),
+        ).length;
+      }
+
+      return aiResponseCount;
     } catch (error) {
-      console.error('Error counting checkpoints:', error);
+      console.error('Error counting AI responses:', error);
       return 0;
     }
   }
