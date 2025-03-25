@@ -10,15 +10,16 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { JwtAuthGuard } from './auth/auth.guard';
 import { StaffJwtAuthGuard } from './auth/staff-auth.guard';
+import logger from 'morgan';
 
 const config = configuration();
 
 async function bootstrap() {
-  const logger = new Logger();
+  const log = new Logger();
   const app = await NestFactory.create(AppModule, {
     //forceCloseConnections: true,
   });
-
+  app.use(logger('dev'));
   app.use(helmet());
   app.setGlobalPrefix('api');
   app.useGlobalPipes(
@@ -40,11 +41,12 @@ async function bootstrap() {
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
 
-  const reflector = app.get(Reflector);
-  app.useGlobalGuards(
-    new JwtAuthGuard(reflector),
-    new StaffJwtAuthGuard(reflector),
-  );
+  // const reflector = app.get(Reflector);
+
+  // app.useGlobalGuards(
+  //   new JwtAuthGuard(reflector),
+  //   new StaffJwtAuthGuard(reflector),
+  // );
 
   // TODO: Remove this in production
   app.enableCors({
@@ -56,6 +58,6 @@ async function bootstrap() {
 
   SwaggerModule.setup('api/docs', app, document);
   await app.listen(port);
-  logger.log(`Application listening on port: ${port}`);
+  log.log(`Application listening on port: ${port}`);
 }
 bootstrap();

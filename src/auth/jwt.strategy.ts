@@ -23,6 +23,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, strategyId) {
   async validate(payload: {
     userId: string;
     email: string;
+    isAdmin: boolean;
     accessToken: string;
     iat: number;
     exp: number;

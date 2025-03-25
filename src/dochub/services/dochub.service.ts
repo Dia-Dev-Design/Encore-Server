@@ -39,7 +39,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
 
     const config = {
       embeddingModel: 'text-embedding-3-small',
-      apiKey: process.env.OPENAI_API_KEY,
+      apiKey: process.env.OPEN_API_KEY,
       chunkSize: 1000,
       chunkOverlap: 200,
     };
@@ -285,6 +285,8 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         },
         distanceStrategy: 'cosine' as DistanceStrategy,
       };
+
+      console.log('this is the databaseurl', process.env.DATABASE_URL);
 
       if (this.vectorStore) {
         await this.vectorStore.end();

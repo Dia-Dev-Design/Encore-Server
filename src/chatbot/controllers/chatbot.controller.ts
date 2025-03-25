@@ -15,6 +15,8 @@ import {
   ForbiddenException,
   Res,
   Req,
+  UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ChatbotService } from '../services/chatbot.service';
 import { ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
@@ -28,6 +30,7 @@ import { UserEntity } from 'src/user/entities/user.entity';
 import { CompaniesService } from 'src/companies/companies.service';
 import { DocHubService } from 'src/dochub/services/dochub.service';
 import { Response } from 'express';
+import { JwtAuthGuard } from 'src/auth/auth.guard';
 
 enum Sentiment {
   GOOD = 'GOOD',
@@ -45,13 +48,14 @@ export class ChatbotController {
   ) {}
 
   @Post('threads')
-  @ApiBearerAuth()
-  @ApiResponse({
-    status: 200,
-    description: 'Chat successfully created',
-  })
+  @UseGuards(JwtAuthGuard)
   async createThread(@Request() req) {
-    return this.chatbotService.createThread(req?.user?.id);
+    // Make sure req.user and req.user.id are defined
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('User not authenticated');
+    }
+
+    return this.chatbotService.createThread(req.user.id);
   }
 
   @Get('threads')

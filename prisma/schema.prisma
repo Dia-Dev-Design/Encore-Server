@@ -17,6 +17,7 @@ model StaffUser {
   createdAt                DateTime              @default(now())
   updatedAt                DateTime              @updatedAt
   isLawyer                 Boolean               @default(false)
+  isAdmin                  Boolean               @default(true)
   ChatLawyer               ChatLawyer[]
   ChatLawyerMessage        ChatLawyerMessage[]
   Company                  Company[]
@@ -37,6 +38,7 @@ model User {
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt
   isVerified          Boolean               @default(false)
+  isAdmin             Boolean               @default(false)
   ChatCategories      ChatCategory[]
   ChatLawyer          ChatLawyer[]
   ChatLawyerMessage   ChatLawyerMessage[]

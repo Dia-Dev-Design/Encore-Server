@@ -10,7 +10,7 @@ export class UserEntity implements User {
   isVerified: boolean;
   createdAt: Date;
   updatedAt: Date;
-
+  isAdmin: boolean;
   constructor(partial: Partial<UserEntity>) {
     Object.assign(this, partial);
   }
