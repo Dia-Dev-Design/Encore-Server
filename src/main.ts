@@ -16,48 +16,53 @@ const config = configuration();
 
 async function bootstrap() {
   const log = new Logger();
-  const app = await NestFactory.create(AppModule, {
-    //forceCloseConnections: true,
-  });
-  app.use(logger('dev'));
-  app.use(helmet());
-  app.setGlobalPrefix('api');
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
-    }),
-  );
+  log.log('Starting Encore server...');
+  try {
+    const app = await NestFactory.create(AppModule, {
+      //forceCloseConnections: true,
+    });
+    log.log('NestFactory created successfully');
+    app.use(logger('dev'));
+    app.use(helmet());
+    app.setGlobalPrefix('api');
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        transformOptions: {
+          enableImplicitConversion: true,
+        },
+      })
+    );
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Encore API')
-    .setDescription('Encore API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Encore API')
+      .setDescription('Encore API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
 
-  // const reflector = app.get(Reflector);
+    const reflector = app.get(Reflector);
+    log.log('Applying global guards...');
+    app.useGlobalGuards(new JwtAuthGuard(reflector));
+    log.log('Global guards applied successfully');
 
-  // app.useGlobalGuards(
-  //   new JwtAuthGuard(reflector),
-  //   new StaffJwtAuthGuard(reflector),
-  // );
+    // TODO: Remove this in production
+    app.enableCors({
+      origin: ['http://localhost:3000', 'https://dev.startupencore.ai'],
+      methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    });
 
-  // TODO: Remove this in production
-  app.enableCors({
-    origin: ['http://localhost:3000', 'https://dev.startupencore.ai'],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  });
+    const port = config.port || 3001;
 
-  const port = config.port || 3001;
-
-  SwaggerModule.setup('api/docs', app, document);
-  await app.listen(port);
-  log.log(`Application listening on port: ${port}`);
+    SwaggerModule.setup('api/docs', app, document);
+    await app.listen(port);
+    log.log(`Application listening on port: ${port}`);
+  } catch (error) {
+    log.error('Error during bootstrap:', error);
+    throw error;
+  }
 }
 bootstrap();
