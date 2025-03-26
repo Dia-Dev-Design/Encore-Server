@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Controller, Get, Query, HttpException, HttpStatus } from '@nestjs/common';
 import { MetricsService } from './metrics.service';
 import { MetricsDto, DashboardCostFormulaDto } from './dto/metrics';
 import { ApiResponse, ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -17,9 +17,7 @@ export class MetricsController {
     status: 200,
     description: 'Metrics for the given period',
   })
-  async getMetrics(
-    @Query('period') period: 'current_week' | 'last_week' | 'last_month',
-  ) {
+  async getMetrics(@Query('period') period: 'current_week' | 'last_week' | 'last_month') {
     const periodDto: MetricsDto = { option: period };
     return this.metricsService.getMetrics(periodDto);
   }
@@ -31,6 +29,10 @@ export class MetricsController {
     description: 'Cost formula metrics for dashboard display',
   })
   async getDashboardCostMetrics(@User() user: UserEntity) {
+    if (!user || !user.id) {
+      throw new HttpException('User not found', HttpStatus.UNAUTHORIZED);
+    }
+
     return await this.metricsService.calculateCostSavings(user.id);
   }
 }
