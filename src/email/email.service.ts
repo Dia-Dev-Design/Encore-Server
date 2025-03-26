@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { MailDataRequired } from '@sendgrid/mail';
 import { SendGridClient } from './sendgrid-client';
 import { ConfigService } from '@nestjs/config';
-import { getResetPasswordTemplate, getVerifyEmailTemplate } from './templates';
+import { 
+  getResetPasswordTemplate, 
+  getVerifyEmailTemplate, 
+  getLawyerChatRequestTemplate, 
+  getLawyerResponseNotificationTemplate,
+  getLawyerNotificationTemplate
+} from './templates';
 
 @Injectable()
 export class EmailService {
@@ -17,9 +23,12 @@ export class EmailService {
   ): Promise<void> {
     const mail: MailDataRequired = {
       to: recipient,
-      from: 'noreply@startupencore.ai',
+      from: this.configService.get('SENDGRID_FROM_EMAIL') || 'noreply@startupencore.ai',
       subject: 'Test email',
-      content: [{ type: 'text/plain', value: body }],
+      html: `<div style="font-family: Arial, sans-serif; padding: 20px;">
+        <p>${body}</p>
+        <p>This is a test email from Encore.</p>
+      </div>`,
     };
     await this.sendGridClient.send(mail);
   }
@@ -43,6 +52,42 @@ export class EmailService {
       to: recipient,
       subject: 'Reset your password',
       html: getResetPasswordTemplate(frontendUrl, name),
+    });
+  }
+
+  async sendLawyerChatRequestEmail(
+    recipient: string,
+    name?: string,
+  ): Promise<void> {
+    this.sendGridClient.send({
+      to: recipient,
+      subject: 'Your Chat with a Lawyer Request',
+      html: getLawyerChatRequestTemplate(name),
+    });
+  }
+
+  async sendLawyerResponseNotificationEmail(
+    recipient: string,
+    name?: string,
+    lawyerName?: string,
+  ): Promise<void> {
+    this.sendGridClient.send({
+      to: recipient,
+      subject: 'A Lawyer Has Responded to Your Chat',
+      html: getLawyerResponseNotificationTemplate(name, lawyerName),
+    });
+  }
+
+  async sendLawyerNotificationEmail(
+    lawyerEmail: string,
+    userName: string,
+    companyName?: string,
+    threadId?: string,
+  ): Promise<void> {
+    this.sendGridClient.send({
+      to: lawyerEmail,
+      subject: 'New Chat Request from a User',
+      html: getLawyerNotificationTemplate(userName, companyName, threadId),
     });
   }
 }

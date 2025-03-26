@@ -30,6 +30,7 @@ import {
   TaskTypeEnum,
 } from '../../tasks/enums/task.enum';
 import { add } from 'date-fns';
+import { EmailService } from '../../email/email.service';
 
 @Injectable()
 export class ChatLawyerService {
@@ -37,6 +38,7 @@ export class ChatLawyerService {
     private readonly eventEmitter: EventEmitter2,
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async getSSEMessages(
@@ -114,6 +116,9 @@ export class ChatLawyerService {
   ) {
     const chat = await this.prisma.chatThread.findFirst({
       where: { id: chatThreadId },
+      include: {
+        User: true,
+      },
     });
     if (!chat) throw new NotFoundException('chat not found');
 
@@ -228,6 +233,7 @@ export class ChatLawyerService {
     const newMessage =
       await this.prisma.chatLawyerMessage.create(newMessageData);
 
+    // Create the SSE message
     const message: MessageForChatLawyerDto = {
       type: ChatTypeEnum.CHAT_LAWYER,
       message: {
@@ -244,19 +250,38 @@ export class ChatLawyerService {
       },
     };
 
+    // Send the SSE event
     this.sendSSE(message, chatThreadId);
+
+    // If a lawyer/staff is responding to a user, send an email notification to the user
+    if (userType === UserTypeEnum.USER_STAFF && userStaff && chat.User) {
+      // This is a lawyer/staff responding to a user
+      await this.emailService.sendLawyerResponseNotificationEmail(
+        chat.User.email,
+        chat.User.name,
+        userStaff.name
+      );
+    }
+
+    return {
+      success: true,
+      message: newMessage,
+    };
   }
 
   async requestLawyer(userId: string, chatThreadId: string) {
     const chat = await this.prisma.chatThread.findFirst({
       where: { id: chatThreadId },
     });
+    console.log("userId", userId);
     if (!chat) throw new NotFoundException('chat not found');
 
     const userCompany = await this.prisma.user.findFirst({
       where: { id: userId },
     });
     if (!userCompany) throw new NotFoundException('user not found');
+
+    console.log("chat.userId", chat.userId);
 
     const isInChat = chat.userId === userId;
     if (!isInChat)
@@ -267,6 +292,7 @@ export class ChatLawyerService {
       select: {
         id: true,
         name: true,
+        email: true,
         _count: {
           select: {
             ChatLawyer: {
@@ -338,6 +364,20 @@ export class ChatLawyerService {
         },
       );
 
+
+      await this.emailService.sendLawyerChatRequestEmail(
+        userCompany.email,
+        userCompany.name,
+      );
+
+
+      await this.emailService.sendLawyerNotificationEmail(
+        lawyer.email,
+        userCompany.name,
+        company.name,
+        chatThreadId,
+      );
+
       //save chatThread new type
       await this.prisma.chatThread.update({
         where: { id: chatThreadId },
@@ -383,31 +423,31 @@ export class ChatLawyerService {
     adminUserId: string,
   ) {
     console.log(
-      `Processing admin message for thread ${chatThreadId} from user ${adminUserId}`,
+      `Admin ${adminUserId} sending message to chat ${chatThreadId}: ${payload.message}`,
     );
 
-    // Get the chat thread
-    const chat = await this.prisma.chatThread.findFirst({
-      where: { id: chatThreadId },
-    });
-
-    if (!chat) {
-      console.error(`Chat thread ${chatThreadId} not found`);
-      throw new NotFoundException('chat not found');
-    }
-
-    // Get admin user info - no permission checks, we assume this is an admin
-    const adminUser = await this.prisma.staffUser.findFirst({
+    // Verify the admin user exists
+    const admin = await this.prisma.staffUser.findUnique({
       where: { id: adminUserId },
     });
 
-    if (!adminUser) {
-      console.log(`Admin user ${adminUserId} not found, using default name`);
-      // Continue anyway with a default name
+    if (!admin) {
+      throw new NotFoundException('Admin user not found');
     }
 
-    const userName = adminUser?.name || 'Admin';
-    console.log(`Sending message as ${userName}`);
+    const userName = admin.name || 'Admin';
+
+    // Get the chat thread
+    const chat = await this.prisma.chatThread.findUnique({
+      where: { id: chatThreadId },
+      include: {
+        User: true,
+      },
+    });
+
+    if (!chat) {
+      throw new NotFoundException('Chat thread not found');
+    }
 
     try {
       // Ensure the chat is marked as lawyer chat type
@@ -469,6 +509,15 @@ export class ChatLawyerService {
 
       // Send the SSE event
       this.sendSSE(message, chatThreadId);
+      
+      // Send email notification to the user about the lawyer's response
+      if (chat.User) {
+        await this.emailService.sendLawyerResponseNotificationEmail(
+          chat.User.email,
+          chat.User.name,
+          userName
+        );
+      }
 
       return {
         success: true,
