@@ -11,6 +11,7 @@ import { ChatbotLawyerController } from './controllers/chat-lawyer.controller';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CompaniesModule } from 'src/companies/companies.module';
 import { DocHubModule } from 'src/dochub/dochub.module';
+import { EmailModule } from 'src/email/email.module';
 
 @Module({
   controllers: [ChatbotController, ChatbotLawyerController],
@@ -21,6 +22,7 @@ import { DocHubModule } from 'src/dochub/dochub.module';
     EventEmitterModule.forRoot(),
     CompaniesModule,
     DocHubModule,
+    EmailModule,
   ],
 })
 export class ChatbotModule {}

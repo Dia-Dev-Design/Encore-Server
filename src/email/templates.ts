@@ -168,3 +168,123 @@ export function style(): string {
     </style>
   `;
 }
+
+export function getLawyerChatRequestTemplate(
+  name?: string,
+): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lawyer Chat Request</title>
+</head>
+<body style="font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f9ff; background-image: url('data:image/svg+xml,<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;600&quot; height=&quot;800&quot;><rect width=&quot;100%&quot; height=&quot;100%&quot; fill=&quot;%23f4f9ff&quot;/><circle cx=&quot;300&quot; cy=&quot;400&quot; r=&quot;200&quot; fill=&quot;%23eef7ff&quot; /></svg>'); background-size: cover; background-position: center;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+            <div style="text-align: center; padding: 20px; background-color: #eef7ff;">
+                <img src="https://i.postimg.cc/7Z0dVC39/encore-svg.png" alt="Encore Logo" style="height: 40px;">
+            </div>        
+        <div style="padding: 30px; text-align: center;">
+            <h1 style="font-size: 24px; color: #333333; margin-bottom: 20px;">Hello ${name || 'there'}!</h1>
+            <p style="font-size: 16px; color: #666666; margin-bottom: 30px;">We've received your request to chat with a lawyer. Our legal team will review your request and respond as soon as possible.</p>
+         background-color: #007bff; text-decoration: none; border-radius: 4px;">View Chat Status</a>
+            <p style="font-size: 16px; color: #666666; margin: 30px 0;">Our typical response time is within 24 hours during business days.</p>
+            <p style="font-size: 16px; color: #666666;">Thank you for your patience</p>
+        </div>
+        <div style="padding: 20px; text-align: center; font-size: 14px; color: #999999; background-color: #f8f9fa;">
+            <p style="margin: 0;">7293 NW 2nd Ave, Miami, FL 33150</p>
+            <p style="margin: 0;">You are receiving this email as you signed up at our website <a href="https://www.encoreai.com" style="color: #007bff; text-decoration: none;">www.encoreai.com</a>. <a href="#" style="color: #007bff; text-decoration: none;">Unsubscribe</a></p>
+            <div style="margin-top: 10px;">
+                <a href="#"><img src="https://via.placeholder.com/24" alt="Instagram" style="height: 24px; margin: 0 10px;"></a>
+                <a href="#"><img src="https://via.placeholder.com/24" alt="LinkedIn" style="height: 24px; margin: 0 10px;"></a>
+                <a href="#"><img src="https://via.placeholder.com/24" alt="WhatsApp" style="height: 24px; margin: 0 10px;"></a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+export function getLawyerResponseNotificationTemplate(
+  name?: string,
+  lawyerName?: string,
+): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lawyer Response Notification</title>
+</head>
+<body style="font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f9ff; background-image: url('data:image/svg+xml,<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;600&quot; height=&quot;800&quot;><rect width=&quot;100%&quot; height=&quot;100%&quot; fill=&quot;%23f4f9ff&quot;/><circle cx=&quot;300&quot; cy=&quot;400&quot; r=&quot;200&quot; fill=&quot;%23eef7ff&quot; /></svg>'); background-size: cover; background-position: center;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+            <div style="text-align: center; padding: 20px; background-color: #eef7ff;">
+                <img src="https://i.postimg.cc/7Z0dVC39/encore-svg.png" alt="Encore Logo" style="height: 40px;">
+            </div>        
+        <div style="padding: 30px; text-align: center;">
+            <h1 style="font-size: 24px; color: #333333; margin-bottom: 20px;">Hello ${name || 'there'}!</h1>
+            <p style="font-size: 16px; color: #666666; margin-bottom: 30px;">${lawyerName ? `${lawyerName} has` : 'A lawyer has'} responded to your chat request.</p>
+            <p style="font-size: 16px; color: #666666; margin: 30px 0;">For the best experience, please respond within 24 hours to keep the conversation active.</p>
+            <p style="font-size: 16px; color: #666666;">Thank you for using Encore</p>
+        </div>
+        <div style="padding: 20px; text-align: center; font-size: 14px; color: #999999; background-color: #f8f9fa;">
+            <p style="margin: 0;">7293 NW 2nd Ave, Miami, FL 33150</p>
+            <p style="margin: 0;">You are receiving this email as you signed up at our website <a href="https://www.encoreai.com" style="color: #007bff; text-decoration: none;">www.encoreai.com</a>. <a href="#" style="color: #007bff; text-decoration: none;">Unsubscribe</a></p>
+            <div style="margin-top: 10px;">
+                <a href="#"><img src="https://via.placeholder.com/24" alt="Instagram" style="height: 24px; margin: 0 10px;"></a>
+                <a href="#"><img src="https://via.placeholder.com/24" alt="LinkedIn" style="height: 24px; margin: 0 10px;"></a>
+                <a href="#"><img src="https://via.placeholder.com/24" alt="WhatsApp" style="height: 24px; margin: 0 10px;"></a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+export function getLawyerNotificationTemplate(
+  userName: string,
+  companyName?: string,
+  threadId?: string,
+): string {
+  return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Chat Request</title>
+</head>
+<body style="font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f9ff; background-image: url('data:image/svg+xml,<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;600&quot; height=&quot;800&quot;><rect width=&quot;100%&quot; height=&quot;100%&quot; fill=&quot;%23f4f9ff&quot;/><circle cx=&quot;300&quot; cy=&quot;400&quot; r=&quot;200&quot; fill=&quot;%23eef7ff&quot; /></svg>'); background-size: cover; background-position: center;">
+    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
+            <div style="text-align: center; padding: 20px; background-color: #eef7ff;">
+                <img src="https://i.postimg.cc/7Z0dVC39/encore-svg.png" alt="Encore Logo" style="height: 40px;">
+            </div>        
+        <div style="padding: 30px; text-align: center;">
+            <div style="background-color: #f8f9fa; border-radius: 4px; padding: 15px; margin-bottom: 20px;">
+                <h2 style="font-size: 18px; color: #007bff; margin: 0;">New Chat Request</h2>
+            </div>
+            <h1 style="font-size: 24px; color: #333333; margin-bottom: 20px;">Chat Request Details</h1>
+            <div style="text-align: left; background-color: #f8f9fa; border-radius: 4px; padding: 20px; margin-bottom: 30px;">
+                <p style="font-size: 16px; color: #666666; margin: 10px 0;"><strong>User:</strong> ${userName}</p>
+                ${companyName ? `<p style="font-size: 16px; color: #666666; margin: 10px 0;"><strong>Company:</strong> ${companyName}</p>` : ''}
+                ${threadId ? `<p style="font-size: 16px; color: #666666; margin: 10px 0;"><strong>Thread ID:</strong> ${threadId}</p>` : ''}
+                <p style="font-size: 16px; color: #666666; margin: 10px 0;"><strong>Request Time:</strong> ${new Date().toLocaleString()}</p>
+            </div>
+            <p style="font-size: 16px; color: #666666; margin-bottom: 30px;">Please review and respond to this chat request within 24 hours.</p>
+            <p style="font-size: 16px; color: #666666;">You can access the chat through your Encore dashboard.</p>
+        </div>
+        <div style="padding: 20px; text-align: center; font-size: 14px; color: #999999; background-color: #f8f9fa;">
+            <p style="margin: 0;">7293 NW 2nd Ave, Miami, FL 33150</p>
+            <p style="margin: 0;">This is an automated message from <a href="https://www.encoreai.com" style="color: #007bff; text-decoration: none;">www.encoreai.com</a></p>
+            <div style="margin-top: 10px;">
+                <a href="#"><img src="https://via.placeholder.com/24" alt="Instagram" style="height: 24px; margin: 0 10px;"></a>
+                <a href="#"><img src="https://via.placeholder.com/24" alt="LinkedIn" style="height: 24px; margin: 0 10px;"></a>
+                <a href="#"><img src="https://via.placeholder.com/24" alt="WhatsApp" style="height: 24px; margin: 0 10px;"></a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>`;
+}
