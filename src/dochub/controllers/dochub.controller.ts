@@ -11,6 +11,7 @@ import {
   HttpException,
   HttpStatus,
   Res,
+  Req,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiResponse, ApiTags } from '@nestjs/swagger';
@@ -22,6 +23,7 @@ import { CompaniesService } from 'src/companies/companies.service';
 import { FileType } from '@prisma/client';
 import { Response } from 'express';
 import { Public } from 'src/auth/decorators/public.decorator';
+import { Request } from 'express';
 
 @ApiTags('DocHub')
 @Controller('dochub')
@@ -179,6 +181,7 @@ export class DocHubController {
   }
 
   @Get('documents/with-urls')
+  @Get('documents/with-urls')
   @ApiBearerAuth()
   @ApiResponse({
     status: 200,
@@ -186,9 +189,28 @@ export class DocHubController {
   })
   async getUserDocumentsWithUrls(
     @User() user: UserEntity,
+    @Req() req: Request, // Use @Req() instead of @Request()
     @Query('page') page: string = '1',
     @Query('limit') limit: string = '8',
   ) {
+    // Log the user object
+    console.log('User object from token:', req.user);
+
+    // Log specific user properties
+    console.log('User ID:', user.id);
+
+    // Get the raw token if needed
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.split(' ')[1];
+
+    if (token) {
+      // Decode the JWT to see its payload
+      const decodedToken = JSON.parse(
+        Buffer.from(token.split('.')[1], 'base64').toString(),
+      );
+      console.log('Decoded JWT payload:', decodedToken);
+    }
+
     return this.docHubService.getUserDocumentsWithUrls(
       user.id,
       parseInt(page, 10),
