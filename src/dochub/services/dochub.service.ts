@@ -146,6 +146,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
   }
 
   async getUserDocuments(userId: string) {
+    console.log('This is the userId on getUserDocements', userId);
     try {
       const userDocs = await this.prisma.userDocument.findMany({
         where: {
@@ -208,6 +209,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
   async getUserDocumentsWithUrls(userId: string, page: number, limit: number) {
     const skip = (page - 1) * limit;
     const documents = await this.getUserDocuments(userId);
+    console.log('These are the documetns from getUser...Urls', documents);
     const paginatedDocuments = documents.slice(skip, skip + limit);
     const totalCount = documents.length;
     const keys = paginatedDocuments.map((doc) => doc.key);
