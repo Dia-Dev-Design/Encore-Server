@@ -42,11 +42,21 @@ import { AuthGuard } from '@nestjs/passport';
 @Injectable()
 export class StaffJwtAuthGuard extends AuthGuard('staff-jwt') {
   handleRequest(err, user, info) {
-    console.log('StaffJwtAuthGuard execution:', { error: err, user, info });
+    console.log('StaffJwtAuthGuard execution:', { 
+      error: err ? { message: err.message, stack: err.stack } : null, 
+      user, 
+      info: info ? { name: info.name, message: info.message } : null 
+    });
 
     // If there is an error or no user, throw an exception
-    if (err || !user) {
-      throw err || new UnauthorizedException('Staff authentication failed');
+    if (err) {
+      console.error('Authentication error:', err.message, err.stack);
+      throw err;
+    }
+    
+    if (!user) {
+      console.error('Authentication failed: No user found', info?.message);
+      throw new UnauthorizedException('Staff authentication failed: ' + (info?.message || 'Invalid token'));
     }
 
     // Ensure the user is an admin

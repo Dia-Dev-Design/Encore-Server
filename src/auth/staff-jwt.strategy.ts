@@ -52,21 +52,28 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class StaffJwtStrategy extends PassportStrategy(Strategy, 'staff-jwt') {
   constructor(private configService: ConfigService) {
+    // Debug logging
+    console.log('Available config:', {
+      jwtStaffSecret: configService.get('jwtStaff.secret'),
+    });
+    
+    const secret = configService.get<string>('jwtStaff.secret');
+    if (!secret) {
+      throw new Error('JWT staff secret is not defined in environment variables (JWT_STAFF_SECRET)');
+    }
+
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET'),
+      secretOrKey: secret,
     });
-    console.log(
-      'Staff JWT Strategy initialized with secret:',
-      configService.get<string>('JWT_SECRET').substring(0, 3) + '...',
-    );
+    
+    console.log('Staff JWT Strategy initialized with secret:', secret.substring(0, 3) + '...');
   }
 
   async validate(payload: any) {
     console.log('Validating JWT payload:', payload);
 
-    // Make sure the payload contains the necessary fields
     if (!payload.userId && !payload.id) {
       console.error('Missing user ID in payload');
       return null;

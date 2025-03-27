@@ -281,7 +281,6 @@ export class ChatLawyerService {
     });
     if (!userCompany) throw new NotFoundException('user not found');
 
-    console.log("chat.userId", chat.userId);
 
     const isInChat = chat.userId === userId;
     if (!isInChat)

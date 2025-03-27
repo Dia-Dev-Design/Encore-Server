@@ -12,6 +12,7 @@ import {
   HttpStatus,
   Res,
   Req,
+  UseGuards,
 } from '@nestjs/common';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiResponse, ApiTags } from '@nestjs/swagger';
@@ -24,6 +25,8 @@ import { FileType } from '@prisma/client';
 import { Response } from 'express';
 import { Public } from 'src/auth/decorators/public.decorator';
 import { Request } from 'express';
+import { StaffJwtAuthGuard } from 'src/auth/staff-auth.guard';
+import { StaffAuth } from 'src/auth/decorators/staff-auth.decorator';
 
 @ApiTags('DocHub')
 @Controller('dochub')
@@ -244,4 +247,18 @@ export class DocHubController {
   ) {
     return this.docHubService.deleteUserDocument(user.id, documentId);
   }
+
+  @Get('assigned-users/:lawyerId')
+  @UseGuards(StaffJwtAuthGuard)
+  @ApiBearerAuth()
+  @StaffAuth()
+  @ApiResponse({
+    status: 200,
+    description: 'User IDs fetched successfully',
+    type: Array,
+  })
+  async getUsersByLawyer(@Param('lawyerId') lawyerId: string, @Req() req: Request) {
+    return this.docHubService.getUsersByLawyer(lawyerId);
+  }
+
 }
