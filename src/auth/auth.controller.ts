@@ -273,55 +273,11 @@ export class AuthController {
       console.log('Staff user found:', staffUser);
       return {
         isAdmin: true,
-        accessToken: token,
+        accessToken: null,
         user: staffUser
       };
     } catch (error) {
       console.error('GET Token verification error:', error);
-      if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
-        throw new UnauthorizedException('Invalid or expired token');
-      }
-      throw error;
-    }
-  }
-
-  @Post('admin/me')
-  @Public()
-  @ApiOperation({
-    summary: 'Verify staff token',
-    description: 'Verify the provided staff token and return the user information',
-  })
-  @ApiBody({ 
-    schema: { 
-      type: 'object', 
-      properties: { 
-        token: { type: 'string', description: 'JWT token' } 
-      } 
-    } 
-  })
-  @ApiOkResponse({ description: 'Token verified and user information retrieved' })
-  @ApiUnauthorizedResponse({ description: 'Invalid token' })
-  async verifyAdminToken(@Body('token') token: string) {
-    try {
-      const decoded = this.jwtService.verify(token);
-      
-      console.log('Decoded token:', decoded);
-      
-      if (!decoded || !decoded.userId) {
-        throw new UnauthorizedException('Invalid token structure');
-      }
-      
-      const staffUser = await this.staffUserService.findById(decoded.userId);
-      
-      if (!staffUser) {
-        throw new NotFoundException('Staff user not found');
-      }
-      
-      return {
-        staffUser: staffUser,
-      };
-    } catch (error) {
-      console.error('Token verification error:', error);
       if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
         throw new UnauthorizedException('Invalid or expired token');
       }

@@ -260,6 +260,48 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async getUsersByLawyer(lawyerId: string) {
+    try {
+      const lawyer = await this.prisma.staffUser.findFirst({
+        where: { 
+          id: lawyerId,
+        },
+      });
+
+      if (!lawyer) {
+        throw new HttpException(
+          'Lawyer not found or user is not a lawyer',
+          HttpStatus.NOT_FOUND
+        );
+      }
+
+      const lawyerUsers = await this.prisma.lawyerUsers.findMany({
+        where: { lawyerId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        }
+      });
+
+      return lawyerUsers.map(lu => ({
+        userId: lu.userId,
+        name: lu.user.name,
+        email: lu.user.email
+      }));
+    } catch (error) {
+      console.error('Error fetching users by lawyer:', error);
+      throw new HttpException(
+        `Error fetching users by lawyer: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
   async similaritySearch(
     query: string,
     k: number = 5,
