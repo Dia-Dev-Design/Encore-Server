@@ -12,6 +12,7 @@ import { JwtAuthGuard } from './auth/auth.guard';
 import { StaffJwtAuthGuard } from './auth/staff-auth.guard';
 import logger from 'morgan';
 
+
 const config = configuration();
 
 async function bootstrap() {
