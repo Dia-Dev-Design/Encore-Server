@@ -220,6 +220,26 @@ export class DocHubController {
     );
   }
 
+  @Get('documents/user/:userId/with-urls')
+  @UseGuards(StaffJwtAuthGuard)
+  @ApiBearerAuth()
+  @StaffAuth()
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved user documents with signed URLs by user ID',
+  })
+  async getUserDocumentsWithUrlsByUserId(
+    @Param('userId') userId: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '8',
+  ) {
+    return this.docHubService.getUserDocumentsWithUrls(
+      userId,
+      parseInt(page, 10),
+      parseInt(limit, 10),
+    );
+  }
+
   @Get('documents/:id/stream')
   @Public()
   @ApiResponse({
