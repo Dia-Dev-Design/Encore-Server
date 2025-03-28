@@ -184,7 +184,6 @@ export class DocHubController {
   }
 
   @Get('documents/with-urls')
-  @Get('documents/with-urls')
   @ApiBearerAuth()
   @ApiResponse({
     status: 200,
