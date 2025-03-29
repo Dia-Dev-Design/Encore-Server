@@ -52,7 +52,7 @@ async function bootstrap() {
 
     // TODO: Remove this in production
     app.enableCors({
-      origin: ['http://localhost:3000', 'https://dev.startupencore.ai'],
+      origin: ['http://localhost:3000', 'https://dev.startupencore.ai', 'https://master.d1n36kjhcunlw5.amplifyapp.com'],
       methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     });
 
