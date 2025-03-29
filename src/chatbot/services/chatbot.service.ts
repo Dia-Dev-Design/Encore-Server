@@ -4,14 +4,12 @@ import {
   Injectable,
   OnModuleDestroy,
   OnModuleInit,
+  BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { OpenAIEmbeddings, ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate } from '@langchain/core/prompts';
-import {
-  PGVectorStore,
-  DistanceStrategy,
-} from '@langchain/community/vectorstores/pgvector';
 import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { tool } from '@langchain/core/tools';
@@ -25,6 +23,7 @@ import {
   SystemMessage,
   trimMessages,
 } from '@langchain/core/messages';
+import { Document } from '@langchain/core/documents';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { ChatLawyerService } from './chat-lawyer.service';
@@ -35,11 +34,10 @@ import pg from 'pg';
 import { MessagesAnnotation } from '@langchain/langgraph';
 import axios from 'axios';
 import { UserTypeEnum } from 'src/user/enums/user-type.enum';
-import {
-  ChatbotLawyerReqStatusEnum,
-  ChatLawyerStatus,
-  ChatTypeEnum,
-} from '../enums/chatbot.enum';
+import { ChatbotLawyerReqStatusEnum, ChatLawyerStatus, ChatTypeEnum } from '../enums/chatbot.enum';
+import { DocHubService } from 'src/dochub/services/dochub.service';
+import { Prisma } from '@prisma/client';
+
 dotenv.config();
 const { Pool } = pg;
 
@@ -53,20 +51,19 @@ enum Sentiment {
 export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   private llm: ChatOpenAI;
   private embeddings: OpenAIEmbeddings;
-  private vectorStore: PGVectorStore;
   private agent: ReturnType<typeof createReactAgent>;
   private splitter: RecursiveCharacterTextSplitter;
   private pgPool: pg.Pool | null = null;
   private initialized = false;
 
-  private agentCache: Map<string, ReturnType<typeof createReactAgent>> =
-    new Map();
+  private agentCache: Map<string, ReturnType<typeof createReactAgent>> = new Map();
   // Track current fileId to avoid unnecessary re-initialization
   private currentFileId: string | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly chatLawyerService: ChatLawyerService,
+    private readonly docHubService: DocHubService
   ) {
     // Constructor now does minimal work, initialization happens lazily
   }
@@ -78,10 +75,10 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       model: process.env.LANGCHAIN_CHAT_MODEL || 'gpt-3.5-turbo',
       temperature: 0,
       apiKey: process.env.OPENAI_API_KEY,
-      streaming: true,
-      embeddingModel: 'text-embedding-3-large',
+      embeddingModel: 'text-embedding-3-small',
       chunkSize: 1000,
       chunkOverlap: 200,
+      streaming: true,
     };
 
     this.llm = new ChatOpenAI({
@@ -105,66 +102,305 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     console.log('ChatbotService base components initialized');
   }
 
-  async initializeAgent(fileId?: string) {
+  async initializeAgent(userId?: string) {
     await this.ensureInitialized();
 
     // Convert undefined to null for consistent cache key comparison
-    const cacheKey = fileId || 'default';
+    const cacheKey = userId || 'default';
 
     try {
-      // If agent for this fileId is already cached and connections are alive, return it
+      // If agent for this userId is already cached and connections are alive, return it
       if (this.agentCache.has(cacheKey) && this.pgPool && !this.pgPool.ended) {
         this.agent = this.agentCache.get(cacheKey)!;
         this.currentFileId = cacheKey;
-        console.log(`Using cached agent for fileId: ${cacheKey}`);
+        console.log(`Using cached agent for userId: ${cacheKey}`);
         return;
       }
 
-      console.log(`Initializing new agent for fileId: ${cacheKey}`);
+      console.log(`Initializing new agent for userId: ${cacheKey}`);
 
-      // Close any existing connections before creating new ones
       await this.closeConnections();
-
-      const vectorStoreConfig = {
-        postgresConnectionOptions: {
-          type: 'postgres',
-          connectionString: process.env.DATABASE_URL,
-          ssl: {
-            rejectUnauthorized: false,
-          },
-        } as PoolConfig,
-        tableName: 'vectorstore',
-        columns: {
-          idColumnName: 'id',
-          vectorColumnName: 'vector',
-          contentColumnName: 'content',
-          metadataColumnName: 'metadata',
-        },
-        distanceStrategy: 'cosine' as DistanceStrategy,
-      };
-
-      this.vectorStore = await PGVectorStore.initialize(
-        this.embeddings,
-        vectorStoreConfig,
-      );
 
       const retrieveSchema = z.object({ query: z.string() });
       const retrieve = tool(
         async ({ query }) => {
           try {
-            const filterParams = fileId ? { file_id: fileId } : {};
-            const retrievedDocs = await this.vectorStore.similaritySearch(
-              query,
-              2,
-              filterParams,
+            // Check for different types of document queries
+            const isGeneralDocumentQuery =
+              /what|list|tell|any|documents|files|uploaded|shared|have i/i.test(query);
+
+            if (isGeneralDocumentQuery) {
+              try {
+                console.log(`[RETRIEVE] Handling general document query`);
+                const userDocs = await this.docHubService.getUserDocuments(userId);
+                console.log(`[RETRIEVE] Found ${userDocs.length} documents for user ${userId}`);
+                console.log(
+                  `[RETRIEVE] Documents:`,
+                  userDocs.map((d) => d.fileName)
+                );
+
+                if (userDocs.length === 0) {
+                  return ['You have not uploaded any documents yet.', []];
+                }
+
+                // Format the document list with upload dates
+                const docList = userDocs
+                  .map((doc) => {
+                    const uploadDate = new Date(doc.createdAt).toLocaleDateString();
+                    return `- ${doc.fileName} (uploaded on ${uploadDate})`;
+                  })
+                  .join('\n');
+
+                const responseText =
+                  userDocs.length === 1
+                    ? `You have uploaded one document:\n${docList}\nYou can ask me about this document specifically.`
+                    : `You have uploaded the following documents:\n${docList}\nYou can ask me about any of these documents specifically.`;
+
+                return [responseText, []];
+              } catch (error) {
+                console.error(`[RETRIEVE] Error getting user documents:`, error);
+                return ['I was unable to retrieve your document list at this time.', []];
+              }
+            }
+
+            // 1. Get all the user's documents first
+            const userDocs = await this.docHubService.getUserDocuments(userId);
+            console.log(
+              `[RETRIEVE] Available documents:`,
+              userDocs.map((d) => d.fileName)
             );
-            const serialized = retrievedDocs
-              .map(
-                (doc) =>
-                  `Source: ${doc.metadata.source}\nContent: ${doc.pageContent}`,
-              )
-              .join('\n');
-            return [serialized, retrievedDocs];
+
+            // 2. Check if the query specifically mentions any document names
+            const queryLower = query.toLowerCase();
+            const matchingDocs = [];
+
+            // First try exact filename matching
+            for (const doc of userDocs) {
+              const fileName = doc.fileName.toLowerCase();
+              if (queryLower.includes(fileName)) {
+                matchingDocs.push(doc);
+                console.log(`[RETRIEVE] Found exact document match: ${doc.fileName}`);
+              }
+            }
+
+            // If no exact matches, try looser matching (e.g., 'legal' matches 'legal.pdf')
+            if (matchingDocs.length === 0) {
+              for (const doc of userDocs) {
+                const fileNameWithoutExt = doc.fileName.toLowerCase().split('.')[0];
+                if (queryLower.includes(fileNameWithoutExt)) {
+                  matchingDocs.push(doc);
+                  console.log(`[RETRIEVE] Found partial document match: ${doc.fileName}`);
+                }
+              }
+            }
+
+            // 3. If specific documents are mentioned, search only within those documents
+            if (matchingDocs.length > 0) {
+              console.log(`[RETRIEVE] Found ${matchingDocs.length} documents mentioned in query:`);
+              matchingDocs.forEach((doc) => console.log(`- ${doc.fileName} (${doc.fileId})`));
+
+              // Search within each matching document and combine results
+              let allResults: Document[] = [];
+
+              for (const doc of matchingDocs) {
+                console.log(`[RETRIEVE] Searching within document: ${doc.fileName}`);
+
+                // Create a more general search query without the document name
+                const docNameWithoutExt = doc.fileName.split('.')[0].toLowerCase();
+                const generalizedQuery = query
+                  .toLowerCase()
+                  .replace(doc.fileName.toLowerCase(), '')
+                  .replace(docNameWithoutExt, '')
+                  .replace(/of|about|summary|summarize|my|the/gi, '')
+                  .trim();
+
+                console.log(`[RETRIEVE] Using generalized query: "${generalizedQuery || query}"`);
+
+                const filterParams = {
+                  user_id: userId,
+                  file_id: doc.fileId,
+                };
+
+                // If generalized query is too short, just return all chunks from that document
+                const searchQuery = generalizedQuery.length > 3 ? generalizedQuery : '';
+
+                // First try with similarity search
+                let docResults = await this.docHubService.similaritySearch(
+                  searchQuery || query,
+                  searchQuery ? 3 : 10,
+                  filterParams
+                );
+                console.log(
+                  `[RETRIEVE] Found ${docResults.length} results for ${doc.fileName} with similarity search`
+                );
+
+                // If no results with similarity search, try retrieving chunks directly
+                if (docResults.length === 0) {
+                  console.log(
+                    `[RETRIEVE] No results found with similarity search, trying direct document retrieval`
+                  );
+
+                  try {
+                    // Get the raw document content directly
+                    const rawDocResults = await this.docHubService.getDocumentChunks(
+                      doc.fileId,
+                      userId,
+                      5
+                    );
+
+                    if (rawDocResults && rawDocResults.length > 0) {
+                      console.log(
+                        `[RETRIEVE] Retrieved ${rawDocResults.length} chunks directly from document`
+                      );
+                      docResults = rawDocResults;
+                    } else {
+                      console.log(
+                        `[RETRIEVE] Document appears to have no content in the database!`
+                      );
+
+                      // Check if the document exists in the database at all
+                      const checkResult = await this.docHubService.checkDocumentExists(doc.fileId);
+                      console.log(`[RETRIEVE] Document exists check: ${checkResult}`);
+                    }
+                  } catch (error) {
+                    console.error(`[RETRIEVE] Error retrieving raw document chunks:`, error);
+                  }
+                }
+
+                // Add document name to each result's metadata for better context
+                docResults.forEach((result) => {
+                  result.metadata.documentName = doc.fileName;
+                });
+
+                allResults = [...allResults, ...docResults];
+              }
+
+              if (allResults.length === 0) {
+                return [
+                  `I found a document called "${matchingDocs[0].fileName}", but I couldn't extract any content from it. This may happen if the document is empty, contains only images, or hasn't been properly processed.`,
+                  [],
+                ];
+              }
+
+              // Format the results with document names
+              const serialized = allResults
+                .map(
+                  (doc) =>
+                    `Source: ${doc.metadata.documentName || doc.metadata.source}\nContent: ${doc.pageContent}`
+                )
+                .join('\n\n---\n\n');
+
+              return [serialized, allResults];
+            }
+
+            // 4. Always include business context with every query
+            // First, extract business context from documents
+            console.log(`[RETRIEVE] Extracting business context from documents`);
+            let businessContext: Document[] = [];
+
+            // Try to find business description documents first (look for keywords in filenames)
+            const businessDocKeywords = [
+              'company',
+              'business',
+              'profile',
+              'overview',
+              'about',
+              'description',
+            ];
+            const potentialBusinessDocs = userDocs.filter((doc) =>
+              businessDocKeywords.some((keyword) => doc.fileName.toLowerCase().includes(keyword))
+            );
+
+            // If we found potential business context documents, search them first
+            if (potentialBusinessDocs.length > 0) {
+              console.log(
+                `[RETRIEVE] Found ${potentialBusinessDocs.length} potential business context documents`
+              );
+
+              for (const doc of potentialBusinessDocs) {
+                const contextResults = await this.docHubService.similaritySearch(
+                  'business overview description company profile',
+                  2,
+                  { user_id: userId, file_id: doc.fileId }
+                );
+
+                if (contextResults.length > 0) {
+                  businessContext = [...businessContext, ...contextResults];
+                }
+              }
+            }
+
+            // If we don't have specific business context yet, try a general search across all documents
+            if (businessContext.length === 0) {
+              console.log(`[RETRIEVE] Searching all documents for business context`);
+              businessContext = await this.docHubService.similaritySearch(
+                'business company description overview profile industry sector',
+                3,
+                { user_id: userId }
+              );
+            }
+
+            // 5. Now perform the main query search
+            console.log(`[RETRIEVE] Searching for query: "${query}"`);
+            const filterParams = userId ? { user_id: userId } : {};
+            const retrievedDocs = await this.docHubService.similaritySearch(query, 5, filterParams);
+
+            // 6. Combine the business context with the query results
+            let allResults = [...retrievedDocs];
+
+            // Only add business context if it's not already covered in the main query results
+            if (businessContext.length > 0) {
+              // Add a special marker to identify business context
+              businessContext.forEach((doc) => {
+                doc.metadata.isBusinessContext = true;
+                doc.metadata.contextType = 'business_profile';
+              });
+
+              // Check if we should add business context based on overlap
+              const shouldAddContext = !retrievedDocs.some((doc) =>
+                businessContext.some(
+                  (contextDoc) =>
+                    doc.pageContent.includes(contextDoc.pageContent) ||
+                    contextDoc.pageContent.includes(doc.pageContent)
+                )
+              );
+
+              if (shouldAddContext) {
+                console.log(`[RETRIEVE] Adding ${businessContext.length} business context items`);
+                allResults = [...businessContext, ...retrievedDocs];
+              }
+            }
+
+            if (allResults.length === 0) {
+              return [
+                "I couldn't find any relevant information in your documents for that query.",
+                [],
+              ];
+            }
+
+            // Add document names to results when possible
+            for (const doc of allResults) {
+              if (doc.metadata.file_id) {
+                const matchingDoc = userDocs.find(
+                  (userDoc) => userDoc.fileId === doc.metadata.file_id
+                );
+                if (matchingDoc) {
+                  doc.metadata.documentName = matchingDoc.fileName;
+                }
+              }
+            }
+
+            // Format the results, clearly marking business context
+            const serialized = allResults
+              .map((doc) => {
+                const sourcePrefix = doc.metadata.isBusinessContext
+                  ? 'Business Context from'
+                  : 'Source';
+                return `${sourcePrefix}: ${doc.metadata.documentName || doc.metadata.source}\nContent: ${doc.pageContent}`;
+              })
+              .join('\n\n---\n\n');
+
+            return [serialized, allResults];
           } catch (error) {
             console.error('Error in retrieve tool:', error);
             return ['No matching documents found.', []];
@@ -173,10 +409,10 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         {
           name: 'retrieve',
           description:
-            'Retrieve information related to a query from documents uploaded to the chatbot.',
+            'Retrieve information related to a query from documents uploaded by the user, including relevant business context.',
           schema: retrieveSchema,
           responseFormat: 'content_and_artifact',
-        },
+        }
       );
 
       const searchSchema = z.object({ query: z.string() });
@@ -219,53 +455,91 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
             });
             return response.data.choices[0].message.content;
           } catch (error) {
-            console.error(
-              'Error fetching response:',
-              error.response?.data || error.message,
-            );
+            console.error('Error fetching response:', error.response?.data || error.message);
             return 'Unable to search for information at this time.';
           }
         },
         {
           name: 'search',
-          description:
-            'Search for updated in realtime information on the web related to a query.',
+          description: 'Search for updated in realtime information on the web related to a query.',
           schema: searchSchema,
           responseFormat: 'content',
-        },
+        }
       );
 
-      // Create a new pool
+      /**
+       * Database connection pool configuration optimized for Supabase free tier which has a hard limit of 10 concurrent connections.
+       *
+       * Performance vs Stability tradeoff:
+       * - Lower 'max' (3): Fewer concurrent DB operations but avoids connection errors
+       * - Zero 'min' (0): No idle connections kept open, slightly slower initial queries
+       * - Lower idle timeout: Releases unused connections faster to free up resources
+       *
+       * This should keep us under the 10-connection limit in development while maintaining reasonable performance.
+       */
       this.pgPool = new Pool({
         connectionString: process.env.DATABASE_URL,
         ssl: {
           rejectUnauthorized: false,
         },
-        max: 30, // maximum number of clients
-        min: 5, // keep some connections warm
-        idleTimeoutMillis: 60000, // close idle clients after 60 seconds
-        connectionTimeoutMillis: 2000, // return an error after 2 seconds if connection could not be established
+        max: 2,
+        min: 0,
+        idleTimeoutMillis: 5000,
+        connectionTimeoutMillis: 5000,
       });
 
       const checkpointSaver = new PostgresSaver(this.pgPool);
       this.agent = await createReactAgent({
         llm: this.llm,
-        tools: fileId ? [retrieve, searchTool] : [searchTool],
+        tools: userId ? [retrieve, searchTool] : [searchTool],
         checkpointSaver: checkpointSaver,
-        stateModifier: async (
-          state: typeof MessagesAnnotation.State,
-        ): Promise<BaseMessage[]> => {
+        stateModifier: async (state: typeof MessagesAnnotation.State): Promise<BaseMessage[]> => {
           return trimMessages(
             [
               new SystemMessage(
+                `You are a highly skilled legal assistant with in-depth knowledge of laws and regulations.
+
+                Your primary goals:
+                - Provide clear, concise, and accurate answers to legal inquiries
+                - Ensure responses are ethically responsible and jurisdictionally appropriate
+                - Maintain professionalism while being accessible to non-lawyers
+
+                You offer support in general legal areas such as contracts, civil rights, property, legal disputes, and more. While your knowledge spans many legal domains, you recognize when questions require specialized expertise.
+                
+                When responding to legal questions:
+                1. If jurisdiction is relevant but not specified, assume the user is in the United States and ask which state and city the question pertains to
+                2. Structure your answers with clear distinctions between legal principles, factual information, and your analysis
+                3. For specific document or information requests, ALWAYS use the **retrieve tool** first
+                4. For questions requiring current information or recent legal developments, use the **search tool**
+                5. Clearly indicate when information might vary by jurisdiction
+                6. Include appropriate disclaimers when the legal situation is complex or ambiguous
+
+                When handling document-related inquiries:
+                1. If the user asks generally about what documents they have shared or uploaded, provide a list of their documents
+                2. If the user asks about a specific document by name, search specifically within that document
+                3. If the user wants to compare or analyze multiple documents, retrieve information from all relevant documents
+                4. Always cite document names when providing information from documents
+                5. If a document search returns no results, suggest the user try different keywords or upload relevant documents
+
+                Important boundaries:
+                - Do NOT provide advice on how to circumvent laws or engage in illegal activities
+                - Always emphasize that your information does not substitute for the advice of a qualified attorney
+                - Maintain confidentiality and advise users not to share sensitive personal information
+
+                IMPORTANT: Only when providing substantive legal information or answering legal questions, include this disclaimer at the end of your response:
+                "As a reminder, the information provided by the Encore AI Chatbot should not be construed as legal advice. If you would like to connect with an attorney to discuss this inquiry further, please click on the 'Ask an Attorney' button in the bottom left of the chat window."
+                
+                DO NOT include this disclaimer when:
+                - Simply listing documents
+                - Asking clarifying questions
+                - Providing non-legal information
+                - Summarizing factual information from documents without legal analysis
+                - Responding to general chat or small talk
+
+                If searching for documents:
+                - If no relevant documents are found using the **retrieve tool**, clearly inform the user while offering alternative assistance
+                - When documents are found, cite them appropriately in your response
                 `
-                You are a highly skilled legal assistant with in-depth knowledge of laws and regulations.
-                Your goal is to provide your answer with clear, concise, and accurate answers to legal inquiries, ensuring that your responses are appropriate, ethically responsible, and aligned with local laws and international legal principles. You offer support in general legal areas such as contracts, civil rights, property, legal disputes, and more. While you are an expert in law, you always emphasize that the information provided does not substitute for the advice of a qualified attorney for complex or specific matters
-                The user may require specific information and relevant context, which should first be retrieved using the **retrieve tool**.
-                Always use this tool if available before answering to ensure accuracy and completeness in your response. 
-                If the user ask for a document or file and there is no information in the context using the **retrieve tool**, answer the user that there is no document or file available in a good way.
-                If the question is something about realtime information, use the **search tool** .
-                `,
               ),
               ...state.messages,
             ],
@@ -276,29 +550,25 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
               startOn: 'human',
               includeSystem: true,
               allowPartial: false,
-            },
+            }
           );
         },
       });
 
-      // Verify agent was created successfully
       if (!this.agent) {
         throw new Error('Failed to initialize agent');
       }
 
-      // Cache the agent
       this.agentCache.set(cacheKey, this.agent);
       this.currentFileId = cacheKey;
 
-      console.log(`Agent initialized and cached for fileId: ${cacheKey}`);
+      console.log(`Agent initialized and cached for userId: ${cacheKey}`);
     } catch (error) {
-      console.error(`Error initializing agent for fileId ${fileId}:`, error);
-      // Clean up any partial resources
+      console.error(`Error initializing agent for userId ${userId}:`, error);
       await this.closeConnections();
-      // Propagate the error
       throw new HttpException(
         `Error initializing chatbot: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -323,11 +593,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     });
   }
 
-  async loadAndProcessDocuments(
-    file: Buffer,
-    fileId: string,
-    threadId: string,
-  ) {
+  async loadAndProcessDocuments(file: Buffer, fileId: string, threadId: string) {
     await this.ensureInitialized();
 
     const thread = await this.validateThread(threadId);
@@ -338,70 +604,24 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         fileId,
       },
     });
+
     if (thread.chatType === ChatTypeEnum.CHATBOT) {
-      // Invalidate any cached agent for this file ID
-      if (this.agentCache.has(fileId)) {
-        console.log(`Invalidating cached agent for fileId: ${fileId}`);
-        this.agentCache.delete(fileId);
-      }
+      const userId = thread.userId;
 
-      // If this is the current file ID, clear it
-      if (this.currentFileId === fileId) {
-        this.currentFileId = null;
-      }
+      await this.docHubService.processDocument(file, fileId, userId);
 
-      const config = {
-        postgresConnectionOptions: {
-          type: 'postgres',
-          connectionString: process.env.DATABASE_URL,
-          ssl: {
-            rejectUnauthorized: false,
-          },
-        } as PoolConfig,
-        tableName: 'vectorstore',
-        columns: {
-          idColumnName: 'id',
-          vectorColumnName: 'vector',
-          contentColumnName: 'content',
-          metadataColumnName: 'metadata',
-        },
-        distanceStrategy: 'cosine' as DistanceStrategy,
-      };
-
-      const loader = new PDFLoader(new Blob([file]), {
-        parsedItemSeparator: '',
+      await this.prisma.chatThread.update({
+        where: { id: threadId },
+        data: { chatFileId: fileId },
       });
 
-      try {
-        // Close any existing vectorStore
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-        }
+      if (this.agentCache.has(userId)) {
+        console.log(`Invalidating cached agent for userId: ${userId}`);
+        this.agentCache.delete(userId);
+      }
 
-        this.vectorStore = await PGVectorStore.initialize(
-          this.embeddings,
-          config,
-        );
-
-        const docs = await loader.load();
-        const allSplits = await this.splitter.splitDocuments(docs);
-
-        allSplits.forEach((split) => {
-          split.metadata.file_id = fileId;
-        });
-
-        console.log(`Split document into ${allSplits.length} sub-documents.`);
-        await this.vectorStore.addDocuments(allSplits);
-        await this.prisma.chatThread.update({
-          where: { id: threadId },
-          data: { chatFileId: fileId },
-        });
-      } finally {
-        // Only close the vectorStore, not the entire connection
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-          this.vectorStore = null;
-        }
+      if (this.currentFileId === userId) {
+        this.currentFileId = null;
       }
     }
   }
@@ -428,10 +648,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     });
 
     if (!thread) {
-      throw new HttpException(
-        `Thread not found: ${threadId}`,
-        HttpStatus.NOT_FOUND,
-      );
+      throw new HttpException(`Thread not found: ${threadId}`, HttpStatus.NOT_FOUND);
     }
 
     return thread;
@@ -487,16 +704,14 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     try {
       const thread = await this.validateThread(thread_id);
 
-      // Only initialize agent if needed (different fileId)
-      const fileIdToUse = thread.chatFileId || null;
-      await this.initializeAgent(fileIdToUse);
+      await this.initializeAgent(userId);
 
       // Verify agent was properly initialized
       if (!this.agent) {
         console.error('Agent was not properly initialized');
         throw new HttpException(
           'Error initializing chatbot agent',
-          HttpStatus.INTERNAL_SERVER_ERROR,
+          HttpStatus.INTERNAL_SERVER_ERROR
         );
       }
 
@@ -517,10 +732,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         const messages =
           response?.values?.messages
             ?.filter((msg) => {
-              if (
-                isHumanMessage(msg) ||
-                (isAIMessage(msg) && !msg.tool_calls?.length)
-              ) {
+              if (isHumanMessage(msg) || (isAIMessage(msg) && !msg.tool_calls?.length)) {
                 return msg;
               }
             })
@@ -556,8 +768,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         };
       } catch (error) {
         console.error('Error getting agent state:', error);
-        // Clear cache for this agent on error
-        this.handleAgentError(error, fileIdToUse);
+        this.handleAgentError(error, userId);
 
         // Return a minimal response with just lawyer messages if available
         const formattedLawyerMessages = await this.getLawyerMessages(thread_id);
@@ -574,7 +785,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       console.error('Error retrieving history:', error);
       throw new HttpException(
         `Error retrieving history: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -584,18 +795,14 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     threadId: string,
     checkpointId: string,
     isFavorite: boolean,
-    sentiment: Sentiment,
+    sentiment: Sentiment
   ) {
     await this.ensureInitialized();
 
     try {
       const thread = await this.validateThread(threadId, userId);
 
-      // Only initialize agent if needed (different fileId)
-      const fileIdToUse = thread.chatFileId || null;
-      if (this.currentFileId !== fileIdToUse) {
-        await this.initializeAgent(fileIdToUse);
-      }
+      await this.initializeAgent(userId);
 
       try {
         if (isFavorite) {
@@ -632,13 +839,11 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
         const messages = checkpoints
           ?.filter((checkpoint) => {
-            const source = (checkpoint?.metadata as { source?: string })
-              ?.source;
+            const source = (checkpoint?.metadata as { source?: string })?.source;
             return source === 'input' || source === 'loop';
           })
           .map((checkpoint) => {
-            const source = (checkpoint?.metadata as { source?: string })
-              ?.source;
+            const source = (checkpoint?.metadata as { source?: string })?.source;
             const checkpointId = checkpoint.checkpoint_id;
             if (source === 'loop') {
               const messages = (
@@ -689,14 +894,14 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         };
       } catch (error) {
         // If we encounter an error, clear cache for this agent
-        this.handleAgentError(error, fileIdToUse);
+        this.handleAgentError(error, userId);
         throw error;
       }
     } catch (error) {
       console.error('Error updating checkpoint:', error);
       throw new HttpException(
         `Error updating checkpoint: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -706,59 +911,110 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     threadId: string,
     inputMessage: string,
     fileId: string,
+    onChunk?: (chunk: string) => void
   ) {
-    await this.ensureInitialized();
+    try {
+      await this.ensureInitialized();
+      const thread = await this.validateThread(threadId);
 
-    const thread = await this.validateThread(threadId);
-
-    // Check if thread's title is empty
-    if (!thread.title) {
-      const titleResponse = await this.llm.invoke(
-        '**generate a concise title with this content:** ' + inputMessage,
-      );
-      const title = String(titleResponse.content).replace(/^"|"$/g, '');
-      await this.prisma.chatThread.update({
-        where: { id: threadId },
-        data: { title },
-      });
-    }
-
-    if (thread.chatType === ChatTypeEnum.CHAT_LAWYER) {
-      await this.chatLawyerService.sendMessage(
-        threadId,
-        { message: inputMessage, fileId },
-        userId,
-        UserTypeEnum.USER_COMPANY,
-      );
-    } else {
-      // Only initialize agent if needed (different fileId)
-      const fileIdToUse = thread.chatFileId || null;
-      if (this.currentFileId !== fileIdToUse) {
-        await this.initializeAgent(fileIdToUse);
+      // Check if thread's title is empty
+      if (!thread.title) {
+        const titleResponse = await this.llm.invoke(
+          '**generate a concise title with this content:** ' + inputMessage
+        );
+        const title = String(titleResponse.content).replace(/^"|"$/g, '');
+        await this.prisma.chatThread.update({
+          where: { id: threadId },
+          data: { title },
+        });
       }
 
-      const config = {
-        configurable: { thread_id: threadId },
-        streamMode: 'values' as const,
-      };
-      const inputs = { messages: [{ role: 'user', content: inputMessage }] };
+      if (thread.chatType === ChatTypeEnum.CHAT_LAWYER) {
+        await this.chatLawyerService.sendMessage(
+          threadId,
+          { message: inputMessage, fileId },
+          userId,
+          UserTypeEnum.USER_COMPANY
+        );
+      } else {
+        await this.initializeAgent(userId);
 
-      try {
-        // Process and generate a response
-        for await (const step of await this.agent.stream(inputs, config)) {
-          const lastMessage = step.messages[step.messages.length - 1];
-          // this.prettyPrint(lastMessage);
-          if (isAIMessage(lastMessage) && !lastMessage.tool_calls?.length) {
-            return lastMessage.content;
+        if (!this.agent) {
+          const error = new Error('Agent initialization failed');
+          console.error(error);
+          if (onChunk) {
+            throw error;
           }
+          return;
         }
-      } catch (error) {
-        console.error('Error processing prompt:', error);
-        // If we encounter an error, clear cache for this agent
-        this.handleAgentError(error, fileIdToUse);
+
+        const config = {
+          configurable: { thread_id: threadId },
+          streamMode: 'values' as const,
+        };
+        const inputs = { messages: [{ role: 'user', content: inputMessage }] };
+
+        try {
+          let hasResponse = false;
+          let finalContent = '';
+          let inToolCallSequence = false;
+
+          for await (const step of await this.agent.stream(inputs, config)) {
+            const lastMessage = step.messages[step.messages.length - 1];
+
+            // Modified condition to handle different message types
+            if (isAIMessage(lastMessage)) {
+              if (lastMessage.tool_calls?.length) {
+                // If we have tool calls, log them but don't send to client
+                inToolCallSequence = true;
+                console.log(
+                  `Tool calls detected: ${JSON.stringify(lastMessage.tool_calls.map((tc) => tc.id))}`
+                );
+                continue;
+              }
+
+              if (lastMessage.content) {
+                finalContent += lastMessage.content.toString();
+
+                // Only send actual content to the client
+                if (lastMessage.content && onChunk) {
+                  hasResponse = true;
+                  onChunk(lastMessage.content.toString());
+                } else if (onChunk) {
+                  hasResponse = true;
+                  onChunk(finalContent);
+                }
+              }
+            }
+          }
+
+          // If we went through the stream but never sent a response, that's an error condition
+          if (!hasResponse && onChunk) {
+            throw new Error('No response generated from the language model');
+          }
+        } catch (error) {
+          console.error('Error during agent streaming:', error);
+          this.handleAgentError(error, userId);
+          throw error;
+        }
+      }
+    } catch (error) {
+      console.error('Error processing prompt:', error);
+      // Only rethrow if we're in streaming mode (onChunk is provided)
+      if (onChunk) {
         throw error;
       }
     }
+  }
+
+  async streamPrompt(
+    userId: string,
+    threadId: string,
+    inputMessage: string,
+    fileId: string,
+    onChunk: (chunk: string) => void
+  ) {
+    return await this.processPrompt(userId, threadId, inputMessage, fileId, onChunk);
   }
 
   async getFilesByThread(thread_id: string, userId: string) {
@@ -769,30 +1025,53 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       console.error('Error retrieving thread files:', error);
       throw new HttpException(
         `Error retrieving thread files: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
 
   async createThread(userId: string) {
     try {
-      const thread = await this.prisma.chatThread.create({
-        data: {
-          userId: userId,
-        },
-      });
-      const userCompany = await this.prisma.userCompany.findFirst({
-        where: { userId },
-      });
-
-      if (!userCompany) {
-        throw new HttpException(
-          `User Company not found: ${userId}`,
-          HttpStatus.NOT_FOUND,
-        );
+      // First, make sure userId is not undefined or empty
+      if (!userId) {
+        throw new BadRequestException('User ID is required to create a chat thread');
       }
 
-      const chatCompany = await this.prisma.chatCompany.upsert({
+      console.log('Creating thread for user ID:', userId); // Add debugging
+
+      const thread = await this.prisma.chatThread.create({
+        data: {
+          User: {
+            connect: {
+              id: userId,
+            },
+          },
+        },
+      });
+
+      console.log('Thread created:', thread); // Add debugging
+      return thread;
+    } catch (error) {
+      // Handle error appropriately
+      console.error('Error creating chat thread:', error);
+
+      // Provide a more descriptive error message
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        if (error.code === 'P2025') {
+          throw new NotFoundException(`User with ID ${userId} not found`);
+        }
+      }
+
+      throw new HttpException(
+        `Error creating chat thread: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  async chatCompany(userCompany: { companyId: string }, thread: { id: string }) {
+    try {
+      const chatCompanyRecord = await this.prisma.chatCompany.upsert({
         where: {
           companyId: userCompany.companyId,
         },
@@ -805,7 +1084,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       await this.prisma.chatThread.update({
         where: { id: thread.id },
-        data: { chatCompanyId: chatCompany.id },
+        data: { chatCompanyId: chatCompanyRecord.id },
       });
 
       return thread;
@@ -814,7 +1093,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error creating thread: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -833,7 +1112,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error retrieving threads: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -845,7 +1124,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       console.error('Error retrieving thread:', error);
       throw new HttpException(
         `Error retrieving thread: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -859,10 +1138,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         },
       });
       if (!thread) {
-        throw new HttpException(
-          `Thread not found: ${threadId}`,
-          HttpStatus.NOT_FOUND,
-        );
+        throw new HttpException(`Thread not found: ${threadId}`, HttpStatus.NOT_FOUND);
       }
       await this.prisma.chatThread.update({
         where: {
@@ -877,7 +1153,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error updating thread: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -897,7 +1173,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error creating category: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -911,10 +1187,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         },
       });
       if (!category) {
-        throw new HttpException(
-          `Category not found: ${categoryId}`,
-          HttpStatus.NOT_FOUND,
-        );
+        throw new HttpException(`Category not found: ${categoryId}`, HttpStatus.NOT_FOUND);
       }
       await this.prisma.chatCategory.update({
         where: {
@@ -929,7 +1202,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error updating category: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -948,16 +1221,12 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error retrieving categories: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
 
-  async associateThreadWithCategory(
-    userId: string,
-    threadId: string,
-    categoryId: string,
-  ) {
+  async associateThreadWithCategory(userId: string, threadId: string, categoryId: string) {
     try {
       const category = await this.prisma.chatCategory.findUnique({
         where: {
@@ -966,10 +1235,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         },
       });
       if (!category) {
-        throw new HttpException(
-          `Category not found: ${categoryId}`,
-          HttpStatus.NOT_FOUND,
-        );
+        throw new HttpException(`Category not found: ${categoryId}`, HttpStatus.NOT_FOUND);
       }
       const existingRelation = await this.prisma.chatThreadCategory.findFirst({
         where: {
@@ -981,7 +1247,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       if (existingRelation) {
         throw new HttpException(
           'Thread is already associated with this category',
-          HttpStatus.CONFLICT,
+          HttpStatus.CONFLICT
         );
       }
 
@@ -997,7 +1263,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error associating thread with category: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -1011,10 +1277,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         },
       });
       if (!category) {
-        throw new HttpException(
-          `Category not found: ${categoryId}`,
-          HttpStatus.NOT_FOUND,
-        );
+        throw new HttpException(`Category not found: ${categoryId}`, HttpStatus.NOT_FOUND);
       }
       const chatThreads = await this.prisma.chatThreadCategory.findMany({
         where: {
@@ -1031,7 +1294,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error retrieving threads by category: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -1058,10 +1321,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         },
       });
       const uncategorizedThreads = threads.filter(
-        (thread) =>
-          !categorizedThreads.some(
-            (category) => category.chatThreadId === thread.id,
-          ),
+        (thread) => !categorizedThreads.some((category) => category.chatThreadId === thread.id)
       );
       return uncategorizedThreads;
     } catch (error) {
@@ -1069,7 +1329,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error retrieving threads without category: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -1093,11 +1353,11 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
               threads.map(async (thread) =>
                 this.prisma.chatThread.findUnique({
                   where: { id: thread.chatThreadId },
-                }),
-              ),
+                })
+              )
             ),
           };
-        }),
+        })
       );
       const uncategorizedThreads = await this.getUncategorizedThreads(userId);
       return {
@@ -1107,8 +1367,8 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
             uncategorizedThreads.map(async (thread) =>
               this.prisma.chatThread.findUnique({
                 where: { id: thread.id },
-              }),
-            ),
+              })
+            )
           ),
         },
       };
@@ -1117,17 +1377,12 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error retrieving all threads and categories: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
 
-  async getMessages(
-    userId: string,
-    threadId: string,
-    isFavorite?: boolean,
-    sentiment?: Sentiment,
-  ) {
+  async getMessages(userId: string, threadId: string, isFavorite?: boolean, sentiment?: Sentiment) {
     await this.ensureInitialized();
 
     try {
@@ -1177,7 +1432,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       console.error('Error getting messages:', error);
       throw new HttpException(
         `Error getting messages: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -1220,20 +1475,13 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       throw new HttpException(
         `Error retrieving all threads : ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
 
   async closeConnections() {
     try {
-      // Close vectorStore connections if it exists
-      if (this.vectorStore) {
-        await this.vectorStore.end();
-        this.vectorStore = null;
-      }
-
-      // Close the pg pool if it exists
       if (this.pgPool) {
         await this.pgPool.end();
         this.pgPool = null;
@@ -1249,7 +1497,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   // Implement OnModuleDestroy
   async onModuleDestroy() {
     console.log(
-      'ChatbotService is being destroyed. Closing database connections and clearing agent cache...',
+      'ChatbotService is being destroyed. Closing database connections and clearing agent cache...'
     );
     // Clear the agent cache
     this.agentCache.clear();

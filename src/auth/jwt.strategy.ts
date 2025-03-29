@@ -14,6 +14,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, strategyId) {
     private readonly configService: ConfigService,
   ) {
     super({
+      // configService: ConfigService,
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       secretOrKey: configService.get('jwt.secret'),
     });
@@ -22,20 +23,22 @@ export class JwtStrategy extends PassportStrategy(Strategy, strategyId) {
   async validate(payload: {
     userId: string;
     email: string;
+    isAdmin: boolean;
+    accessToken: string;
     iat: number;
     exp: number;
   }) {
+    console.log('$payload', payload);
     const id = payload.userId;
     const user = await this.userService.findById(id);
+
+    console.log('$user', user);
 
     if (!user) {
       throw new UnauthorizedException();
     }
 
-    if (
-      user.lastPasswordChange &&
-      user.lastPasswordChange.getTime() > payload.iat * 1000
-    ) {
+    if (user.lastPasswordChange && user.lastPasswordChange.getTime() > payload.iat * 1000) {
       throw new UnauthorizedException();
     }
 

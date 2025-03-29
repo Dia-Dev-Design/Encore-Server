@@ -10,52 +10,60 @@ import { Logger, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import { JwtAuthGuard } from './auth/auth.guard';
 import { StaffJwtAuthGuard } from './auth/staff-auth.guard';
+import logger from 'morgan';
+
 
 const config = configuration();
 
 async function bootstrap() {
-  const logger = new Logger();
-  const app = await NestFactory.create(AppModule, {
-    //forceCloseConnections: true,
-  });
+  const log = new Logger();
+  log.log('Starting Encore server...');
+  try {
+    const app = await NestFactory.create(AppModule, {
+      //forceCloseConnections: true,
+    });
+    log.log('NestFactory created successfully');
+    app.use(logger('dev'));
+    app.use(helmet());
+    app.setGlobalPrefix('api');
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+        transformOptions: {
+          enableImplicitConversion: true,
+        },
+      })
+    );
 
-  app.use(helmet());
-  app.setGlobalPrefix('api');
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: {
-        enableImplicitConversion: true,
-      },
-    }),
-  );
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Encore API')
+      .setDescription('Encore API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Encore API')
-    .setDescription('Encore API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
+    const reflector = app.get(Reflector);
+    log.log('Applying global guards...');
+    app.useGlobalGuards(new JwtAuthGuard(reflector));
+    log.log('Global guards applied successfully');
 
-  const reflector = app.get(Reflector);
-  app.useGlobalGuards(
-    new JwtAuthGuard(reflector),
-    new StaffJwtAuthGuard(reflector),
-  );
+    // TODO: Remove this in production
+    app.enableCors({
+      origin: ['http://localhost:3000', 'https://dev.startupencore.ai'],
+      methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    });
 
-  // TODO: Remove this in production
-  app.enableCors({
-    origin: ['http://localhost:3000', 'https://dev.startupencore.ai'],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-  });
+    const port = config.port || 3001;
 
-  const port = config.port || 3000;
-
-  SwaggerModule.setup('api/docs', app, document);
-  await app.listen(port);
-  logger.log(`Application listening on port: ${port}`);
+    SwaggerModule.setup('api/docs', app, document);
+    await app.listen(port);
+    log.log(`Application listening on port: ${port}`);
+  } catch (error) {
+    log.error('Error during bootstrap:', error);
+    throw error;
+  }
 }
 bootstrap();

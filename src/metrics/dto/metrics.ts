@@ -14,4 +14,22 @@ export class MetricsResponseDto {
     clients: number;
     change_rate: number;
   };
+  cost_savings: {
+    questionCount: number;
+    nonEncoreResponseTime: number;
+    averageHourlyCost: number;
+    nonEncorePerHourCost: number;
+    encoreCost: number;
+    costSavings: number;
+  };
+}
+
+export class CostFormulaItemDto {
+  label: string;
+  value: number | string;
+}
+
+export class DashboardCostFormulaDto {
+  title: string;
+  data: CostFormulaItemDto[];
 }

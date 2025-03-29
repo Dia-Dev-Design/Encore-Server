@@ -7,6 +7,8 @@ import {
   Req,
   Res,
   UseGuards,
+  UnauthorizedException,
+  NotFoundException,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import {
@@ -19,6 +21,7 @@ import {
   ApiOperation,
   ApiQuery,
   ApiBearerAuth,
+  ApiBody,
 } from '@nestjs/swagger';
 import { LoginDto } from './dto/login.dto';
 import { Auth } from './entities/auth.entity';
@@ -26,25 +29,29 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RequestResetPasswordDto } from './dto/request-reset-password.dto';
 import { JwtAuthGuard } from './auth.guard';
 import { CreateUserDto } from 'src/user/dto/create-user.dto';
-import { GoogleGuard } from './google.guard';
+// import { GoogleGuard } from './google.guard';
 import { Public } from './decorators/public.decorator';
 import { User } from './decorators/user.decorator';
 import { UserEntity } from 'src/user/entities/user.entity';
+
 import { StaffJwtPayload, UserJwtPayload } from './types/jwt-payload.types';
 import { StaffJwtAuthGuard } from './staff-auth.guard';
 import { StaffUserService } from 'src/user/services/staff-service-user.service';
-import { UserService } from 'src/user/services/user.service';
 import { StaffAuth } from './decorators/staff-auth.decorator';
-import { use } from 'passport';
+import { Request, Response } from 'express';
+import { UserService } from '../user/services/user.service';
+import { JwtService } from '@nestjs/jwt';
 
-@ApiTags('auth')
 @Controller('auth')
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
     private readonly userService: UserService,
     private readonly staffUserService: StaffUserService,
-  ) {}
+    private readonly jwtService: JwtService,
+  ) {
+    console.log('AuthService intialized');
+  }
 
   @Post('login')
   @Public()
@@ -62,6 +69,7 @@ export class AuthController {
     description: 'Invalid email or password combination',
   })
   login(@Body() body: LoginDto) {
+    console.log('We hav hit login this body+++>', body);
     return this.authService.login(body);
   }
 
@@ -176,43 +184,23 @@ export class AuthController {
     return this.authService.verifyEmail(decodedToken);
   }
 
-  @Get('google')
-  @Public()
-  @UseGuards(GoogleGuard)
-  @ApiOperation({
-    summary: 'Google OAuth',
-    description: 'Initiate Google OAuth authentication flow',
-  })
-  @ApiOkResponse({ description: 'Redirected to Google login' })
-  googleAuth() {
-    // Guard handles the authentication
-  }
-
-  @Get('google/redirect')
-  @Public()
-  @UseGuards(GoogleGuard)
-  @ApiOperation({
-    summary: 'Google OAuth callback',
-    description: 'Handle the Google OAuth callback and authenticate user',
-  })
-  @ApiOkResponse({ description: 'Successfully authenticated with Google' })
-  async googleAuthRedirect(@Req() req, @Res() res) {
-    return this.authService.googleLogin(req, res);
-  }
-
   @Post('admin/login')
   @Public()
   @ApiOperation({
     summary: 'Staff login',
-    description: 'Authenticate staff member and return JWT access token',
+    description: 'Login for staff members',
   })
-  @ApiCreatedResponse({
-    type: Auth,
-    description: 'Staff member authenticated successfully',
-  })
-  @ApiUnauthorizedResponse({ description: 'Invalid staff credentials' })
-  staffLogin(@Body() body: LoginDto) {
-    return this.authService.staffLogin(body);
+  @ApiBody({ type: LoginDto })
+  @ApiOkResponse({ description: 'Staff login successful' })
+  @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
+  async staffLogin(@Body() loginDto: LoginDto, @Req() req: Request) {
+    try {
+      const result = await this.authService.staffLogin(loginDto);
+      return result;
+    } catch (error) {
+      console.error('❌ Staff login error:', error);
+      throw error;
+    }
   }
 
   @Get('me')
@@ -224,21 +212,76 @@ export class AuthController {
   })
   @ApiOkResponse({ description: 'User information retrieved successfully' })
   @ApiUnauthorizedResponse({ description: 'Invalid or expired token' })
-  getUserInfo(@User() user: UserJwtPayload) {
-    return this.userService.getUser(user);
+  async getUserInfo(
+    @User() user: UserJwtPayload,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    return await this.userService.getUser(user);
   }
 
+  // @Get('admin/me')
+  // @UseGuards(StaffJwtAuthGuard)
+  // @ApiBearerAuth()
+  // @ApiOperation({
+  //   summary: 'Get staff info',
+  //   description: "Retrieve authenticated staff member's information",
+  // })
+  // @ApiOkResponse({ description: 'Staff information retrieved successfully' })
+  // @ApiUnauthorizedResponse({ description: 'Invalid or expired staff token' })
+  // getStaffUserInfo(
+  //   @User() user: any,
+  //   @Res({ passthrough: true }) res: Response,
+  // ) {
+  //   console.log('🔍 User object in getStaffUserInfo:', JSON.stringify(user));
+  //   if (!user || !user.userId) {
+  //     throw new UnauthorizedException('Invalid authentication credentials');
+  //   }
+    
+  //   return this.staffUserService.findById(user.userId);
+  // }
+  
   @Get('admin/me')
-  @StaffAuth()
-  @UseGuards(StaffJwtAuthGuard)
-  @ApiBearerAuth()
+  @Public()
   @ApiOperation({
-    summary: 'Get staff info',
-    description: "Retrieve authenticated staff member's information",
+    summary: 'Get staff info from token',
+    description: "Retrieve staff information from JWT token in Authorization header",
   })
+  @ApiBearerAuth()
   @ApiOkResponse({ description: 'Staff information retrieved successfully' })
-  @ApiUnauthorizedResponse({ description: 'Invalid or expired staff token' })
-  getStaffUserInfo(@User() user: StaffJwtPayload) {
-    return this.staffUserService.findById(user.id);
+  @ApiUnauthorizedResponse({ description: 'Invalid or expired token' })
+  async getStaffUserInfoFromHeader(@Req() req: Request) {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        throw new UnauthorizedException('Missing or invalid authorization header');
+      }
+      
+      const token = authHeader.split(' ')[1];
+      console.log('Token from Authorization header:', token.substring(0, 20) + '...');
+      
+      const decoded = this.jwtService.verify(token);
+      console.log('Decoded token in GET:', decoded);
+      
+      if (!decoded.userId) {
+        throw new UnauthorizedException('Invalid token structure');
+      }
+      
+      const staffUser = await this.staffUserService.findById(decoded.userId);
+      if (!staffUser) {
+        throw new NotFoundException('Staff user not found');
+      }
+      console.log('Staff user found:', staffUser);
+      return {
+        isAdmin: true,
+        accessToken: null,
+        user: staffUser
+      };
+    } catch (error) {
+      console.error('GET Token verification error:', error);
+      if (error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError') {
+        throw new UnauthorizedException('Invalid or expired token');
+      }
+      throw error;
+    }
   }
 }

@@ -6,7 +6,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { UserModule } from 'src/user/user.module';
 import { EmailModule } from 'src/email/email.module';
-import { GoogleStrategy } from './google.strategy';
+// import { GoogleStrategy } from './google.strategy';
 import { JwtStrategy } from './jwt.strategy';
 import { StaffJwtStrategy } from './staff-jwt.strategy';
 import { JwtAuthGuard } from './auth.guard';
@@ -20,24 +20,44 @@ import { StaffJwtAuthGuard } from './staff-auth.guard';
     EmailModule,
     JwtModule.registerAsync({
       imports: [ConfigModule, UserModule],
-      inject: [ConfigService],
       useFactory: async (configService: ConfigService) => ({
-        secret: configService.get('jwt.secret'),
-        signOptions: {
-          expiresIn: configService.get('jwt.expiresIn'),
-        },
+        secret: configService.get<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '24h' },
       }),
+      inject: [ConfigService],
     }),
   ],
-  controllers: [AuthController],
   providers: [
     AuthService,
-    GoogleStrategy,
+    // GoogleStrategy,
     JwtStrategy,
     StaffJwtStrategy,
     JwtAuthGuard,
     StaffJwtAuthGuard,
   ],
+  controllers: [AuthController],
   exports: [AuthService, JwtAuthGuard, StaffJwtAuthGuard],
 })
 export class AuthModule {}
+
+// @Module({
+//   imports: [
+//     JwtModule.registerAsync({
+//       imports: [ConfigModule],
+//       useFactory: async (configService: ConfigService) => ({
+//         secret: configService.get<string>('JWT_SECRET'),
+//         signOptions: { expiresIn: '24h' },
+//       }),
+//       inject: [ConfigService],
+//     }),
+//     // ... other imports
+//   ],
+//   providers: [
+//     AuthService,
+//     StaffJwtStrategy, // Make sure this is included
+//     // ... other providers
+//   ],
+//   controllers: [AuthController],
+//   exports: [AuthService],
+// })
+// export class AuthModule {}

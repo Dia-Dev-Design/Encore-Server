@@ -109,10 +109,107 @@ export class MetricsService {
     return { prospects, clients };
   }
 
+  async countAIResponses(userId?: string) {
+    try {
+      const threads = await this.prismaService.chatThread.findMany({
+        where: { userId },
+        select: { id: true },
+      });
+      if (threads.length === 0) {
+        return 0;
+      }
+      const threadIds = threads.map((thread) => thread.id);
+      const checkpoints = await this.prismaService.checkpoint.findMany({
+        where: {
+          thread_id: { in: threadIds },
+        },
+        select: {
+          metadata: true,
+        },
+      });
+
+      let aiResponseCount = 0;
+      for (const checkpoint of checkpoints) {
+        const metadata = checkpoint.metadata as {
+          writes?: {
+            agent?: {
+              messages?: Array<{ id: string[]; kwargs: { content: string } }>;
+            };
+            __start__?: {
+              messages?: Array<{ id: string[]; kwargs: { content: string } }>;
+            };
+          };
+        };
+
+        const agentMessages = metadata?.writes?.agent?.messages ?? [];
+        const startMessages = metadata?.writes?.__start__?.messages ?? [];
+        const allMessages = [...agentMessages, ...startMessages];
+
+        aiResponseCount += allMessages.filter(
+          (msg) => msg.kwargs?.content && !msg.id?.includes('HumanMessage'),
+        ).length;
+      }
+
+      return aiResponseCount;
+    } catch (error) {
+      console.error('Error counting AI responses:', error);
+      return 0;
+    }
+  }
+
+  async calculateCostSavings(userId?: string) {
+    console.log('userId', userId);
+    try {
+      const aiResponsesCount = await this.countAIResponses(userId);
+      console.log('aiResponsesCount', aiResponsesCount);
+
+      const hoursPerQuestion = 0.3;
+      const averageHourlyCost = 961;
+      const nonEncorePerHourCost = 2883;
+      const encoreCost = 250;
+      const traditionalCost =
+        aiResponsesCount * hoursPerQuestion * nonEncorePerHourCost;
+      const costSavings = traditionalCost - encoreCost;
+      const timeSavedHours = aiResponsesCount * hoursPerQuestion;
+      const timeSavedDays = Math.floor(timeSavedHours / 8);
+      const remainingHours = Math.round((timeSavedHours % 8) * 10) / 10; // Round to 1 decimal place
+
+      return {
+        questionCount: aiResponsesCount,
+        nonEncoreResponseTime: hoursPerQuestion,
+        averageHourlyCost,
+        nonEncorePerHourCost,
+        encoreCost,
+        costSavings: costSavings > 0 ? costSavings : 0,
+        timeSaved: {
+          hours: timeSavedHours,
+          workdays: timeSavedDays,
+          remainingHours: remainingHours,
+          formatted: `${timeSavedDays} days, ${remainingHours} hours`,
+        },
+      };
+    } catch (error) {
+      console.error('Error calculating cost savings:', error);
+      return {
+        questionCount: 0,
+        nonEncoreResponseTime: 0.3,
+        averageHourlyCost: 961,
+        nonEncorePerHourCost: 2883,
+        encoreCost: 250,
+        costSavings: 0,
+        timeSaved: {
+          hours: 0,
+          workdays: 0,
+          remainingHours: 0,
+          formatted: '0 days, 0 hours',
+        },
+      };
+    }
+  }
+
   async getMetrics(dto: MetricsDto) {
     const { start, end, startPrev, endPrev } = this.getRange(dto.option);
 
-    // Obtener métricas para el período actual
     const totalSignUps = await this.calculateCount(start, end, 'user');
     const totalActiveOnboarding = await this.calculateCount(
       start,
@@ -166,6 +263,10 @@ export class MetricsService {
       totalSignUps + activeDissolutions,
       totalSignUpsPrev + activeDissolutionsPrev,
     );
+
+    // Calculate cost savings for the current period
+    const costSavings = await this.calculateCostSavings();
+
     return {
       signups: {
         total: totalSignUps,
@@ -185,6 +286,7 @@ export class MetricsService {
         change_rate: rateProspectsClientsChange,
         prospects_to_clients: activeDissolutions - activeDissolutionsPrev,
       },
+      cost_savings: costSavings,
     };
   }
 }

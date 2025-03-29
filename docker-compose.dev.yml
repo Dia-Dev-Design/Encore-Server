@@ -15,6 +15,7 @@ services:
 
   encore-backend:
     build:
+      # COMPOSE_BAKE: true
       context: .
       dockerfile: development.dockerfile
     working_dir: /usr/app
@@ -26,7 +27,7 @@ services:
     depends_on:
       - postgres
     ports:
-      - '3000:3000'
+      - '8080:8080'
 
 volumes:
   postgres_data_dev:

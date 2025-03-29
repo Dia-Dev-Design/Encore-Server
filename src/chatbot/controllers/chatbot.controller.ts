@@ -13,6 +13,10 @@ import {
   Patch,
   NotFoundException,
   ForbiddenException,
+  Res,
+  Req,
+  UseGuards,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ChatbotService } from '../services/chatbot.service';
 import { ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
@@ -24,6 +28,9 @@ import { Public } from '@prisma/client/runtime/library';
 import { User } from 'src/auth/decorators/user.decorator';
 import { UserEntity } from 'src/user/entities/user.entity';
 import { CompaniesService } from 'src/companies/companies.service';
+import { DocHubService } from 'src/dochub/services/dochub.service';
+import { Response } from 'express';
+import { JwtAuthGuard } from 'src/auth/auth.guard';
 
 enum Sentiment {
   GOOD = 'GOOD',
@@ -37,16 +44,18 @@ export class ChatbotController {
     private readonly chatbotService: ChatbotService,
     private readonly s3Service: S3Service,
     private readonly companyService: CompaniesService,
+    private readonly docHubService: DocHubService,
   ) {}
 
   @Post('threads')
-  @ApiBearerAuth()
-  @ApiResponse({
-    status: 200,
-    description: 'Chat successfully created',
-  })
+  @UseGuards(JwtAuthGuard)
   async createThread(@Request() req) {
-    return this.chatbotService.createThread(req?.user?.id);
+    // Make sure req.user and req.user.id are defined
+    if (!req.user || !req.user.id) {
+      throw new UnauthorizedException('User not authenticated');
+    }
+
+    return this.chatbotService.createThread(req.user.id);
   }
 
   @Get('threads')
@@ -234,6 +243,103 @@ export class ChatbotController {
         `Error processing prompt: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
+    }
+  }
+
+  @Post('ask/stream')
+  @ApiBearerAuth()
+  @ApiResponse({ status: 200, description: 'Streamed answer generation' })
+  async streamPrompt(@Req() req, @Body() body, @Res() response: Response) {
+    const { thread_id, prompt, fileId } = body;
+
+    // Validate inputs
+    if (!thread_id || !prompt) {
+      response.write(
+        `data: ${JSON.stringify({ error: 'Thread ID and prompt are required' })}\n\n`,
+      );
+      // Use type assertion to avoid TypeScript error with flush
+      if (
+        'flush' in response &&
+        typeof (response as any).flush === 'function'
+      ) {
+        (response as any).flush();
+      }
+      response.end();
+      return;
+    }
+
+    // Set headers for streaming and CORS
+    response.setHeader('Content-Type', 'text/event-stream');
+    response.setHeader('Cache-Control', 'no-cache');
+    response.setHeader('Connection', 'keep-alive');
+    response.setHeader('Access-Control-Allow-Origin', '*');
+    response.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering if using nginx
+
+    try {
+      // Verify thread access before starting stream
+      const thread = await this.chatbotService.getThread(
+        thread_id,
+        req?.user?.id,
+      );
+      if (!thread) {
+        response.write(
+          `data: ${JSON.stringify({ error: 'Thread not found or access denied' })}\n\n`,
+        );
+        // Use type assertion to avoid TypeScript error with flush
+        if (
+          'flush' in response &&
+          typeof (response as any).flush === 'function'
+        ) {
+          (response as any).flush();
+        }
+        response.end();
+        return;
+      }
+
+      // Write initial confirmation that stream is starting
+      response.write(`data: ${JSON.stringify({ content: '' })}\n\n`);
+
+      // Stream response to client
+      await this.chatbotService.streamPrompt(
+        req?.user?.id,
+        thread_id,
+        prompt,
+        fileId || null,
+        // Pass a callback to handle each chunk
+        (chunk) => {
+          response.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+          // Use type assertion to avoid TypeScript error with flush
+          if (
+            'flush' in response &&
+            typeof (response as any).flush === 'function'
+          ) {
+            (response as any).flush();
+          }
+        },
+      );
+
+      response.end();
+    } catch (error) {
+      console.error('Error streaming prompt:', error);
+
+      // Extract a meaningful error message
+      let errorMessage = 'An error occurred while generating a response';
+      if (error instanceof HttpException) {
+        errorMessage = error.message;
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+
+      // Send the error to the client
+      response.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
+      // Use type assertion to avoid TypeScript error with flush
+      if (
+        'flush' in response &&
+        typeof (response as any).flush === 'function'
+      ) {
+        (response as any).flush();
+      }
+      response.end();
     }
   }
 

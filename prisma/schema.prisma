@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,12 +7,532 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model StaffUser {
+  name                     String
+  id                       String                @id @default(uuid())
+  email                    String                @unique
+  password                 String
+  lastPasswordChange       DateTime?
+  lastLogin                DateTime?
+  createdAt                DateTime              @default(now())
+  updatedAt                DateTime              @updatedAt
+  isLawyer                 Boolean               @default(false)
+  isAdmin                  Boolean               @default(true)
+  ChatLawyer               ChatLawyer[]
+  ChatLawyerMessage        ChatLawyerMessage[]
+  Company                  Company[]
+  FolderFileReference      FolderFileReference[]
+  LawyerUsers              LawyerUsers[]
+  NotificationsStaff       NotificationsStaff[]  @relation("StaffUser")
+  NotificationsStaffOrigin NotificationsStaff[]  @relation("StaffOrigin")
+  Task                     Task[]
+}
+
+model User {
+  id                  String                @id @default(uuid())
+  email               String                @unique
+  name                String?
+  phoneNumber         String?
+  password            String
+  lastPasswordChange  DateTime?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  isVerified          Boolean               @default(false)
+  isAdmin             Boolean               @default(false)
+  ChatCategories      ChatCategory[]
+  ChatLawyer          ChatLawyer[]
+  ChatLawyerMessage   ChatLawyerMessage[]
+  ChatThreads         ChatThread[]
+  FolderFileReference FolderFileReference[]
+  LawyerUsers         LawyerUsers[]
+  Meeting             Meeting[]
+  NotificationsStaff  NotificationsStaff[]
+  Task                Task[]
+  UserCompany         UserCompany[]
+  UserDocument        UserDocument[]
+  UserResetPassword   UserResetPassword[]
+  UserVerification    UserVerification[]
+}
+
+model Industry {
+  id        String    @id @default(uuid())
+  name      String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  Company   Company[]
+}
+
+model Company {
+  id                                     String                           @id @default(uuid())
+  name                                   String
+  industryId                             String
+  parentCompanyId                        String?
+  createdAt                              DateTime                         @default(now())
+  updatedAt                              DateTime                         @updatedAt
+  hasCompletedSetup                      Boolean                          @default(false)
+  hasRaisedCapital                       Boolean?
+  hasW2Employees                         Boolean?
+  otherStage                             String?
+  otherStructure                         String?
+  hasBeenEvaluated                       Boolean                          @default(false)
+  status                                 String?
+  currentStage                           String?
+  assignedAdminId                        String?
+  hasPaidTheFee                          Boolean                          @default(false)
+  structure                              String?
+  estatePropertyOrEquipmentDetails       String?
+  financialDetailsId                     String?                          @unique
+  intellectualPropertyId                 String?                          @unique
+  hasSubsidiaries                        Boolean                          @default(false)
+  areEmployeesInBargainingAgreements     Boolean                          @default(false)
+  employeesInBargainingAgreementsDetails String?
+  rootFolderId                           String?                          @unique
+  ChatCompany                            ChatCompany?
+  AssignedAdmin                          StaffUser?                       @relation(fields: [assignedAdminId], references: [id])
+  CompanyFinancialDetails                CompanyFinancialDetails?         @relation(fields: [financialDetailsId], references: [id])
+  Industry                               Industry                         @relation(fields: [industryId], references: [id])
+  CompanyIntellectualProperty            CompanyIntellectualProperty?     @relation(fields: [intellectualPropertyId], references: [id])
+  ParentCompany                          Company?                         @relation("ParentCompany", fields: [parentCompanyId], references: [id])
+  ChildCompanies                         Company[]                        @relation("ParentCompany")
+  CompanyCountryLocation                 CompanyCountryLocation[]
+  CompanyEmployeeCountryLocation         CompanyEmployeeCountryLocation[]
+  services                               CompanyServices[]
+  CompanyStateLocation                   CompanyStateLocation[]
+  CompanyW2EmployeeStateLocation         CompanyW2EmployeeStateLocation[]
+  Folders                                Folder[]
+  Meetings                               Meeting[]
+  Task                                   Task[]
+  UserCompany                            UserCompany[]
+}
+
+model CompanyIntellectualProperty {
+  id                          String   @id @default(uuid())
+  hasIntellectualProperty     Boolean  @default(false)
+  intellectualProperty        Json?
+  pendingIPApplicationDetails String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+  Company                     Company?
+}
+
+model CompanyFinancialDetails {
+  id                               String   @id @default(uuid())
+  financialObligationsDetails      String?
+  intendToHaveAssetDetails         String?
+  ongoingNegotationsForSaleDetails String?
+  hasReceivedOffersDetails         String?
+  createdAt                        DateTime @default(now())
+  updatedAt                        DateTime @updatedAt
+  Company                          Company?
+}
+
+model CompanyStateLocation {
+  id        String   @id @default(uuid())
+  companyId String
+  state     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  Company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, state])
+}
+
+model CompanyCountryLocation {
+  id        String   @id @default(uuid())
+  companyId String
+  country   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  Company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, country])
+}
+
+model CompanyW2EmployeeStateLocation {
+  id        String   @id @default(uuid())
+  companyId String
+  state     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  Company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, state])
+}
+
+model CompanyEmployeeCountryLocation {
+  id        String   @id @default(uuid())
+  companyId String
+  country   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  Company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, country])
+}
+
+model UserCompany {
+  id        String          @id @default(uuid())
+  userId    String
+  companyId String
+  role      UserCompanyRole
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  Company   Company         @relation(fields: [companyId], references: [id])
+  User      User            @relation(fields: [userId], references: [id])
+
+  @@unique([userId, companyId])
+  @@index([userId])
+  @@index([companyId])
+}
+
+model UserResetPassword {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  User      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model UserVerification {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  User      User     @relation(fields: [userId], references: [id])
+
+  @@index([token])
+}
+
+model Meeting {
+  id        String        @id @default(uuid())
+  companyId String
+  userId    String
+  date      DateTime
+  joinUrl   String?       @unique
+  status    MeetingStatus @default(PENDING)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  Company   Company       @relation(fields: [companyId], references: [id])
+  User      User          @relation(fields: [userId], references: [id])
+
+  @@index([companyId])
+  @@index([userId])
+}
+
+model Task {
+  id                 String     @id @default(uuid())
+  description        String
+  category           String
+  typeTask           String
+  status             String
+  isAssigned         Boolean    @default(false)
+  companyId          String
+  assignedToAdminId  String?
+  assignedToClientId String?
+  dueDate            DateTime
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+  progress           Int        @default(0)
+  startDate          DateTime?
+  stepName           String?
+  stepPosition       Int?
+  taskPosition       Int?
+  admin              StaffUser? @relation(fields: [assignedToAdminId], references: [id])
+  client             User?      @relation(fields: [assignedToClientId], references: [id])
+  company            Company    @relation(fields: [companyId], references: [id])
+}
+
+model CompanyServices {
+  id        String   @id @default(uuid())
+  companyId String
+  service   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  enabled   Boolean  @default(true)
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, service])
+}
+
+model CheckpointBlob {
+  thread_id     String
+  checkpoint_ns String @default("")
+  channel       String
+  version       String
+  type          String
+  blob          Bytes?
+
+  @@id([thread_id, checkpoint_ns, channel, version])
+  @@map("checkpoint_blobs")
+}
+
+model CheckpointMigration {
+  v Int @id
+
+  @@map("checkpoint_migrations")
+}
+
+model CheckpointWrite {
+  thread_id     String
+  checkpoint_ns String  @default("")
+  checkpoint_id String
+  task_id       String
+  idx           Int
+  channel       String
+  type          String?
+  blob          Bytes
+
+  @@id([thread_id, checkpoint_ns, checkpoint_id, task_id, idx])
+  @@map("checkpoint_writes")
+}
+
+model Checkpoint {
+  thread_id            String
+  checkpoint_ns        String     @default("")
+  checkpoint_id        String
+  parent_checkpoint_id String?
+  type                 String?
+  checkpoint           Json
+  metadata             Json       @default("{}")
+  created_at           DateTime   @default(now())
+  is_favorite          Boolean    @default(false)
+  sentiment            Sentiment  @default(NEUTRAL)
+  ChatThread           ChatThread @relation(fields: [thread_id], references: [id])
+
+  @@id([thread_id, checkpoint_ns, checkpoint_id])
+  @@map("checkpoints")
+}
+
+model ChatThread {
+  id                String               @id @default(uuid())
+  userId            String
+  title             String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  chatCompanyId     String?
+  chatFileId        String?
+  chatType          String               @default("CHATBOT")
+  ChatLawyer        ChatLawyer[]
+  ChatLawyerMessage ChatLawyerMessage[]
+  ChatCompany       ChatCompany?         @relation(fields: [chatCompanyId], references: [id])
+  FileReference     FileReference?       @relation(fields: [chatFileId], references: [id])
+  User              User                 @relation(fields: [userId], references: [id])
+  ChatCategories    ChatThreadCategory[]
+  ChatThreadFiles   ChatThreadFile[]
+  LawyerUsers       LawyerUsers[]
+  Checkpoints       Checkpoint[]
+
+  @@index([userId])
+}
+
+model ChatThreadFile {
+  id            String        @id @default(uuid())
+  chatThreadId  String
+  fileId        String
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  ChatThread    ChatThread    @relation(fields: [chatThreadId], references: [id])
+  FileReference FileReference @relation(fields: [fileId], references: [id])
+
+  @@index([fileId])
+}
+
+model ChatCategory {
+  id          String               @id @default(uuid())
+  userId      String
+  name        String
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  User        User                 @relation(fields: [userId], references: [id])
+  ChatThreads ChatThreadCategory[]
+
+  @@index([userId])
+}
+
+model ChatThreadCategory {
+  chatThreadId   String
+  chatCategoryId String
+  ChatCategory   ChatCategory @relation(fields: [chatCategoryId], references: [id])
+  ChatThread     ChatThread   @relation(fields: [chatThreadId], references: [id])
+
+  @@id([chatThreadId, chatCategoryId])
+}
+
+model ChatCompany {
+  id              String       @id @default(uuid())
+  companyId       String       @unique
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  lawyerReqStatus String
+  Company         Company      @relation(fields: [companyId], references: [id])
+  ChatThread      ChatThread[]
+}
+
+model FileReference {
+  id                  String                @id @default(uuid())
+  key                 String                @unique
+  url                 String
+  mimeType            String
+  size                Int
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  fileType            FileType              @default(NONE)
+  originalName        String?
+  ChatLawyerMessage   ChatLawyerMessage[]
+  ChatThread          ChatThread[]
+  ChatThreadFile      ChatThreadFile[]
+  FolderFileReference FolderFileReference[]
+  UserDocument        UserDocument?
+}
+
+model Folder {
+  id                  String                @id @default(uuid())
+  name                String
+  parentId            String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  companyId           String?
+  Company             Company?              @relation(fields: [companyId], references: [id])
+  ParentFolder        Folder?               @relation("FolderChildren", fields: [parentId], references: [id])
+  ChildFolders        Folder[]              @relation("FolderChildren")
+  FolderFileReference FolderFileReference[]
+}
+
+model FolderFileReference {
+  id        String        @id @default(uuid())
+  folderId  String
+  fileId    String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  product   ProductEnum
+  staffId   String?
+  userId    String?
+  File      FileReference @relation(fields: [fileId], references: [id])
+  Folder    Folder        @relation(fields: [folderId], references: [id])
+  StaffUser StaffUser?    @relation(fields: [staffId], references: [id])
+  User      User?         @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([staffId])
+}
+
+model ChatLawyer {
+  id            String     @id @default(uuid())
+  lawyerId      String?
+  ChatThreadId  String
+  status        String?
+  createdAt     DateTime   @default(now())
+  endService    DateTime?
+  updatedAt     DateTime   @updatedAt
+  statusRequest String     @default("requested")
+  userRequestId String
+  ChatThread    ChatThread @relation(fields: [ChatThreadId], references: [id])
+  StaffUser     StaffUser? @relation(fields: [lawyerId], references: [id])
+  User          User       @relation(fields: [userRequestId], references: [id])
+
+  @@index([lawyerId])
+  @@index([ChatThreadId])
+}
+
+model ChatLawyerMessage {
+  id              String         @id @default(uuid())
+  userMessageType String
+  content         String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  lawyerId        String?
+  userId          String?
+  ChatThreadId    String
+  fileId          String?
+  ChatThread      ChatThread     @relation(fields: [ChatThreadId], references: [id])
+  FileReference   FileReference? @relation(fields: [fileId], references: [id])
+  StaffUser       StaffUser?     @relation(fields: [lawyerId], references: [id])
+  User            User?          @relation(fields: [userId], references: [id])
+}
+
+model NotificationsStaff {
+  id                  String     @id @default(uuid())
+  content             String
+  readed              Boolean    @default(false)
+  staffId             String
+  userOriginId        String?
+  staffOriginIdString String?
+  type                String
+  category            String
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  actionRedirectId    String?
+  StaffUser           StaffUser  @relation("StaffUser", fields: [staffId], references: [id])
+  StaffOrigin         StaffUser? @relation("StaffOrigin", fields: [staffOriginIdString], references: [id])
+  UserOrigin          User?      @relation(fields: [userOriginId], references: [id])
+}
+
+model DissolutionFlowStep {
+  id               String  @id @default(uuid())
+  phase            String
+  phaseId          Int
+  stepId           Int
+  stepName         String
+  responsibleParty Json
+  objetive         String?
+  dependencies     String
+  duration         String
+  totalTasks       Int?
+  tasks            Json?
+  durationDays     Int
+}
+
+model UserDocument {
+  id        String        @id @default(uuid())
+  userId    String
+  fileId    String        @unique
+  isActive  Boolean       @default(true)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  File      FileReference @relation(fields: [fileId], references: [id])
+  User      User          @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model LawyerUsers {
+  id        String     @id @default(uuid())
+  userId    String
+  lawyerId  String
+  status    String     @default("PENDING")
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  chatId    String
+  chat      ChatThread @relation(fields: [chatId], references: [id])
+  lawyer    StaffUser  @relation(fields: [lawyerId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([lawyerId])
+  @@index([chatId])
+}
+
+/// This model is managed by LangChain, not Prisma
+model vectorstore {
+  id        String                @id @default(dbgenerated("(uuid_generate_v4())::text"))
+  content   String
+  metadata  Json
+  embedding Unsupported("vector")
+
+  @@ignore
+}
+
 enum CompanyStructure {
   CORPORATION
   LLC
 }
 
-//status
 enum CurrentStage {
   RECENTLY_DECIDED_SHUTDOWN
   MIDDLE_OF_SHUTDOWN
@@ -49,509 +563,8 @@ enum ProductEnum {
   CHATBOT
 }
 
-model StaffUser {
-  name               String
-  id                 String    @id @default(uuid())
-  email              String    @unique
-  password           String
-  lastPasswordChange DateTime?
-  lastLogin          DateTime?
-  isLawyer           Boolean   @default(false)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  Task                     Task[]
-  Company                  Company[]
-  ChatLawyer               ChatLawyer[]
-  ChatLawyerMessage        ChatLawyerMessage[]
-  NotificationsStaff       NotificationsStaff[]  @relation("StaffUser")
-  NotificationsStaffOrigin NotificationsStaff[]  @relation("StaffOrigin")
-  FolderFileReference      FolderFileReference[]
-}
-
-model User {
-  id                 String    @id @default(uuid())
-  email              String    @unique
-  name               String?
-  phoneNumber        String?
-  password           String
-  lastPasswordChange DateTime?
-  isVerified         Boolean   @default(false)
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-
-  UserResetPassword   UserResetPassword[]
-  UserVerification    UserVerification[]
-  UserCompany         UserCompany[]
-  Meeting             Meeting[]
-  Task                Task[]
-  ChatThreads         ChatThread[]
-  ChatCategories      ChatCategory[]
-  ChatLawyerMessage   ChatLawyerMessage[]
-  NotificationsStaff  NotificationsStaff[]
-  ChatLawyer          ChatLawyer[]
-  FolderFileReference FolderFileReference[]
-}
-
-model Industry {
-  id        String    @id @default(uuid())
-  name      String
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  Company   Company[]
-}
-
-model Company {
-  id                                     String   @id @default(uuid())
-  name                                   String
-  industryId                             String
-  parentCompanyId                        String?
-  structure                              String?
-  otherStructure                         String?
-  currentStage                           String?
-  status                                 String?
-  otherStage                             String?
-  estatePropertyOrEquipmentDetails       String?
-  hasRaisedCapital                       Boolean?
-  hasW2Employees                         Boolean?
-  areEmployeesInBargainingAgreements     Boolean  @default(false)
-  employeesInBargainingAgreementsDetails String?
-  hasCompletedSetup                      Boolean  @default(false)
-  hasBeenEvaluated                       Boolean  @default(false)
-  hasPaidTheFee                          Boolean  @default(false)
-  hasSubsidiaries                        Boolean  @default(false)
-  createdAt                              DateTime @default(now())
-  updatedAt                              DateTime @updatedAt
-  assignedAdminId                        String?
-  intellectualPropertyId                 String?  @unique()
-  financialDetailsId                     String?  @unique()
-  rootFolderId                           String?  @unique()
-
-  Industry                       Industry                         @relation(fields: [industryId], references: [id])
-  ParentCompany                  Company?                         @relation("ParentCompany", fields: [parentCompanyId], references: [id])
-  ChildCompanies                 Company[]                        @relation("ParentCompany")
-  AssignedAdmin                  StaffUser?                       @relation(fields: [assignedAdminId], references: [id])
-  CompanyIntellectualProperty    CompanyIntellectualProperty?     @relation(fields: [intellectualPropertyId], references: [id])
-  CompanyFinancialDetails        CompanyFinancialDetails?         @relation(fields: [financialDetailsId], references: [id])
-  UserCompany                    UserCompany[]
-  Meetings                       Meeting[]
-  CompanyStateLocation           CompanyStateLocation[]
-  CompanyCountryLocation         CompanyCountryLocation[]
-  CompanyW2EmployeeStateLocation CompanyW2EmployeeStateLocation[]
-  CompanyEmployeeCountryLocation CompanyEmployeeCountryLocation[]
-  Task                           Task[]
-  services                       CompanyServices[]
-  ChatCompany                    ChatCompany?
-  Folders                        Folder[]
-}
-
-model CompanyIntellectualProperty {
-  id                          String   @id @default(uuid())
-  hasIntellectualProperty     Boolean  @default(false)
-  intellectualProperty        Json?
-  pendingIPApplicationDetails String?
-  createdAt                   DateTime @default(now())
-  updatedAt                   DateTime @updatedAt
-  Company                     Company?
-}
-
-model CompanyFinancialDetails {
-  id                               String   @id @default(uuid())
-  financialObligationsDetails      String?
-  intendToHaveAssetDetails         String?
-  ongoingNegotationsForSaleDetails String?
-  hasReceivedOffersDetails         String?
-  createdAt                        DateTime @default(now())
-  updatedAt                        DateTime @updatedAt
-  Company                          Company?
-}
-
-model CompanyStateLocation {
-  id        String   @id @default(uuid())
-  companyId String
-  state     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  Company Company @relation(fields: [companyId], references: [id])
-
-  @@unique([companyId, state])
-}
-
-model CompanyCountryLocation {
-  id        String   @id @default(uuid())
-  companyId String
-  country   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  Company Company @relation(fields: [companyId], references: [id])
-
-  @@unique([companyId, country])
-}
-
-model CompanyW2EmployeeStateLocation {
-  id        String   @id @default(uuid())
-  companyId String
-  state     String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  Company Company @relation(fields: [companyId], references: [id])
-
-  @@unique([companyId, state])
-}
-
-model CompanyEmployeeCountryLocation {
-  id        String   @id @default(uuid())
-  companyId String
-  country   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  Company Company @relation(fields: [companyId], references: [id])
-
-  @@unique([companyId, country])
-}
-
-model UserCompany {
-  id        String          @id @default(uuid())
-  userId    String
-  companyId String
-  role      UserCompanyRole
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-
-  User    User    @relation(fields: [userId], references: [id])
-  Company Company @relation(fields: [companyId], references: [id])
-
-  @@unique([userId, companyId])
-  @@index([userId])
-  @@index([companyId])
-}
-
-model UserResetPassword {
-  id        String   @id @default(uuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  User User @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-}
-
-model UserVerification {
-  id        String   @id @default(uuid())
-  userId    String
-  token     String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  User User @relation(fields: [userId], references: [id])
-
-  @@index([token])
-}
-
-model Meeting {
-  id        String        @id @default(uuid())
-  companyId String
-  userId    String
-  date      DateTime
-  joinUrl   String?       @unique
-  status    MeetingStatus @default(PENDING)
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-
-  Company Company @relation(fields: [companyId], references: [id])
-  User    User    @relation(fields: [userId], references: [id])
-
-  @@index([companyId])
-  @@index([userId])
-}
-
-model Task {
-  id                 String    @id @default(uuid())
-  description        String
-  stepName           String?
-  stepPosition       Int?
-  taskPosition       Int?
-  category           String
-  typeTask           String
-  status             String
-  isAssigned         Boolean   @default(false)
-  companyId          String
-  assignedToAdminId  String?
-  assignedToClientId String?
-  startDate          DateTime?
-  dueDate            DateTime
-  progress           Int       @default(0)
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-
-  company Company    @relation(fields: [companyId], references: [id])
-  admin   StaffUser? @relation(fields: [assignedToAdminId], references: [id])
-  client  User?      @relation(fields: [assignedToClientId], references: [id])
-}
-
-model CompanyServices {
-  id        String   @id @default(uuid())
-  companyId String
-  service   String
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  company Company @relation(fields: [companyId], references: [id])
-
-  @@unique([companyId, service])
-}
-
-model CheckpointBlob {
-  thread_id     String
-  checkpoint_ns String @default("")
-  channel       String
-  version       String
-  type          String
-  blob          Bytes? @db.ByteA
-
-  @@id([thread_id, checkpoint_ns, channel, version])
-  @@map("checkpoint_blobs")
-}
-
-model CheckpointMigration {
-  v Int @id
-
-  @@map("checkpoint_migrations")
-}
-
-model CheckpointWrite {
-  thread_id     String
-  checkpoint_ns String  @default("")
-  checkpoint_id String
-  task_id       String
-  idx           Int
-  channel       String
-  type          String?
-  blob          Bytes
-
-  @@id([thread_id, checkpoint_ns, checkpoint_id, task_id, idx])
-  @@map("checkpoint_writes")
-}
-
 enum Sentiment {
   GOOD
   BAD
   NEUTRAL
-}
-
-model Checkpoint {
-  thread_id            String
-  checkpoint_ns        String     @default("")
-  checkpoint_id        String
-  parent_checkpoint_id String?
-  type                 String?
-  checkpoint           Json
-  metadata             Json       @default("{}")
-  is_favorite          Boolean    @default(false)
-  sentiment            Sentiment  @default(NEUTRAL)
-  created_at           DateTime   @default(now())
-  ChatThread           ChatThread @relation(fields: [thread_id], references: [id])
-
-  @@id([thread_id, checkpoint_ns, checkpoint_id])
-  @@map("checkpoints")
-}
-
-model ChatThread {
-  id            String   @id @default(uuid())
-  userId        String
-  title         String?
-  chatCompanyId String?
-  chatFileId    String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  chatType      String   @default("CHATBOT")
-
-  User              User                 @relation(fields: [userId], references: [id])
-  FileReference     FileReference?       @relation(fields: [chatFileId], references: [id])
-  Checkpoints       Checkpoint[]
-  ChatCategories    ChatThreadCategory[]
-  ChatCompany       ChatCompany?         @relation(fields: [chatCompanyId], references: [id])
-  ChatLawyer        ChatLawyer[]
-  ChatLawyerMessage ChatLawyerMessage[]
-  ChatThreadFiles   ChatThreadFile[]
-
-  @@index([userId])
-}
-
-model ChatThreadFile {
-  id           String   @id @default(uuid())
-  chatThreadId String
-  fileId       String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  ChatThread    ChatThread    @relation(fields: [chatThreadId], references: [id])
-  FileReference FileReference @relation(fields: [fileId], references: [id])
-
-  @@index([fileId])
-}
-
-model ChatCategory {
-  id        String   @id @default(uuid())
-  userId    String
-  name      String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  User        User                 @relation(fields: [userId], references: [id])
-  ChatThreads ChatThreadCategory[]
-
-  @@index([userId])
-}
-
-model ChatThreadCategory {
-  chatThreadId   String
-  chatCategoryId String
-
-  ChatThread   ChatThread   @relation(fields: [chatThreadId], references: [id])
-  ChatCategory ChatCategory @relation(fields: [chatCategoryId], references: [id])
-
-  @@id([chatThreadId, chatCategoryId])
-}
-
-model ChatCompany {
-  id        String   @id @default(uuid())
-  companyId String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  //temp
-  lawyerReqStatus String
-
-  Company    Company      @relation(fields: [companyId], references: [id])
-  ChatThread ChatThread[]
-}
-
-model FileReference {
-  id                  String                @id @default(uuid())
-  key                 String                @unique
-  url                 String
-  mimeType            String
-  size                Int
-  fileType            FileType              @default(NONE)
-  originalName        String?
-  createdAt           DateTime              @default(now())
-  updatedAt           DateTime              @updatedAt
-  ChatThread          ChatThread[]
-  FolderFileReference FolderFileReference[]
-  ChatThreadFile      ChatThreadFile[]
-  ChatLawyerMessage   ChatLawyerMessage[]
-}
-
-model Folder {
-  id        String   @id @default(uuid())
-  name      String
-  parentId  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  companyId String?
-
-  FolderFileReference FolderFileReference[]
-  ParentFolder        Folder?               @relation("FolderChildren", fields: [parentId], references: [id])
-  ChildFolders        Folder[]              @relation("FolderChildren")
-  Company             Company?              @relation(fields: [companyId], references: [id])
-}
-
-model FolderFileReference {
-  id        String      @id @default(uuid())
-  folderId  String
-  fileId    String
-  product   ProductEnum
-  userId    String?
-  staffId   String?
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-
-  Folder    Folder        @relation(fields: [folderId], references: [id])
-  File      FileReference @relation(fields: [fileId], references: [id])
-  User      User?         @relation(fields: [userId], references: [id])
-  StaffUser StaffUser?    @relation(fields: [staffId], references: [id])
-
-  @@index([userId])
-  @@index([staffId])
-}
-
-model ChatLawyer {
-  id            String    @id @default(uuid())
-  lawyerId      String?
-  ChatThreadId  String
-  status        String? //actived, finalized,,,, 
-  statusRequest String    @default("requested") //requested,in_process, done
-  createdAt     DateTime  @default(now())
-  endService    DateTime?
-  updatedAt     DateTime  @updatedAt
-  userRequestId String
-
-  StaffUser  StaffUser? @relation(fields: [lawyerId], references: [id])
-  ChatThread ChatThread @relation(fields: [ChatThreadId], references: [id])
-  User       User?      @relation(fields: [userRequestId], references: [id])
-
-  @@index([lawyerId])
-  @@index([ChatThreadId])
-}
-
-model ChatLawyerMessage {
-  id              String   @id @default(uuid())
-  userMessageType String
-  content         String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  lawyerId        String?
-  userId          String?
-  ChatThreadId    String
-  fileId          String?
-
-  FileReference FileReference? @relation(fields: [fileId], references: [id])
-  ChatThread    ChatThread     @relation(fields: [ChatThreadId], references: [id])
-  StaffUser     StaffUser?     @relation(fields: [lawyerId], references: [id])
-  User          User?          @relation(fields: [userId], references: [id])
-}
-
-model NotificationsStaff {
-  id                  String  @id @default(uuid())
-  content             String
-  readed              Boolean @default(false)
-  staffId             String
-  userOriginId        String?
-  staffOriginIdString String?
-  type                String
-  category            String //dissolution, chatbot
-  actionRedirectId    String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  StaffUser   StaffUser  @relation("StaffUser", fields: [staffId], references: [id])
-  StaffOrigin StaffUser? @relation("StaffOrigin", fields: [staffOriginIdString], references: [id])
-  UserOrigin  User?      @relation(fields: [userOriginId], references: [id])
-}
-
-model DissolutionFlowStep {
-  id               String  @id @default(uuid())
-  phase            String
-  phaseId          Int
-  stepId           Int
-  stepName         String
-  responsibleParty Json
-  objetive         String?
-  dependencies     String
-  duration         String
-  durationDays     Int
-  totalTasks       Int?
-  tasks            Json?
 }

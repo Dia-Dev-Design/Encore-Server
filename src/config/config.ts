@@ -43,7 +43,7 @@ export interface Config {
 }
 
 export default (): Config => ({
-  port: parseInt(process.env.PORT, 10) || 3000,
+  port: parseInt(process.env.PORT, 10) || 8080,
   frontendUrl: process.env.FRONTEND_URL || 'https://dev.startupencore.ai',
   database: {
     connectionString: process.env.DATABASE_URL,

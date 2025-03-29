@@ -5,6 +5,26 @@ import { GetObjectCommand, S3 } from '@aws-sdk/client-s3';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { FileReference, FileType, ProductEnum } from '@prisma/client';
+import { Readable } from 'stream';
+import { StreamingBlobPayloadOutputTypes } from '@smithy/types';
+
+async function streamToBuffer(
+  stream: StreamingBlobPayloadOutputTypes,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  if (stream instanceof Uint8Array) {
+    return Buffer.from(stream);
+  }
+  if (stream instanceof Readable) {
+    for await (const chunk of stream) {
+      chunks.push(Buffer.from(chunk));
+    }
+  } else {
+    const response = await stream.transformToByteArray();
+    return Buffer.from(response);
+  }
+  return Buffer.concat(chunks);
+}
 
 @Injectable()
 export class S3Service {
@@ -25,6 +45,34 @@ export class S3Service {
     });
 
     this.bucketName = this.configService.get<string>('s3.bucketName');
+  }
+
+  async getObjectStream(key: string, res: any) {
+    try {
+      const params = {
+        Bucket: this.bucketName,
+        Key: key,
+      };
+      const command = new GetObjectCommand(params);
+      const response = await this.s3.send(command);
+      res.setHeader('Content-Type', response.ContentType || 'application/pdf');
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${key.split('/').pop()}"`,
+      );
+      if (response.Body) {
+        if (response.Body instanceof Readable) {
+          response.Body.pipe(res);
+        } else {
+          res.send(await streamToBuffer(response.Body));
+        }
+      } else {
+        throw new Error('No body in response');
+      }
+    } catch (error) {
+      console.error('Error streaming S3 object:', error);
+      throw error;
+    }
   }
 
   async uploadFile(
@@ -49,22 +97,28 @@ export class S3Service {
       params: s3Params,
     }).done();
 
-    return this.prisma.fileReference.create({
-      data: {
-        key: s3Params.Key,
-        originalName: file.originalname,
-        url: uploadResult.Location,
-        mimeType: file.mimetype,
-        size: file.size,
-        FolderFileReference: {
-          create: {
-            userId: params.userId,
-            staffId: params.staffId,
-            product: ProductEnum.CHATBOT,
-            folderId: params.rootFolderId,
-          },
+    const fileData: any = {
+      key: s3Params.Key,
+      originalName: file.originalname,
+      url: uploadResult.Location,
+      mimeType: file.mimetype,
+      size: file.size,
+      fileType: fileType,
+    };
+
+    if (params?.rootFolderId) {
+      fileData.FolderFileReference = {
+        create: {
+          userId: params.userId,
+          staffId: params.staffId,
+          product: ProductEnum.CHATBOT,
+          folderId: params.rootFolderId,
         },
-      },
+      };
+    }
+
+    return this.prisma.fileReference.create({
+      data: fileData,
     });
   }
 
