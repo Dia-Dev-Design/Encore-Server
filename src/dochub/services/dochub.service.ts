@@ -363,6 +363,8 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
             ssl: {
               rejectUnauthorized: false,
             },
+            connectionTimeoutMillis: 30000,
+            query_timeout: 60000,
           },
           tableName: 'vectorstore',
           columns: {
