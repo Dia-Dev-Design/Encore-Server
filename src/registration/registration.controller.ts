@@ -35,7 +35,9 @@ export class RegistrationController {
   })
   @ApiBadRequestResponse({ description: 'Invalid input data' })
   @ApiUnauthorizedResponse({ description: 'User not authenticated' })
-  async step1(@User() user: UserEntity, @Body() body: Step1Dto) {
+  async step1(@User() user: any, @Body() body: any) {
+    console.log('🔍 User object in step1:', JSON.stringify(user));
+    console.log('🔍 Body object in step1:', JSON.stringify(body));
     return this.registerService.registerStep1(user, body);
   }
 
