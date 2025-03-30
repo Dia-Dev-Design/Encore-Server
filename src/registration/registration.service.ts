@@ -11,6 +11,7 @@ import { Step3Dto } from './dto/step3.dto';
 import { UserEntity } from 'src/user/entities/user.entity';
 import { UserRepository } from 'src/user/repositories/user.repository';
 import { CompanyStructureEnum } from '../companies/enums/comapanies.enum';
+import { IndustriesService } from 'src/industries/industries.service';
 
 @Injectable()
 export class RegistrationService {
@@ -18,13 +19,29 @@ export class RegistrationService {
     private readonly companiesRepository: CompaniesRepository,
     private readonly usersRepository: UserRepository,
     private readonly companiesService: CompaniesService,
+    private readonly industriesService: IndustriesService,
   ) {}
 
-  async registerStep1(user: UserEntity, step1Dto: Step1Dto) {
+  async registerStep1(user: any, step1Dto: any) {
+    // If industryId is actually a name string, find the industry by name
+    let industryId = step1Dto.industryId;
+    
+    if (industryId && typeof industryId === 'string' && !industryId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      // It's not a UUID format, so it's probably a name
+      const industries = await this.industriesService.findAll();
+      const industry = industries.find(ind => ind.name.toLowerCase() === industryId.toLowerCase());
+      
+      if (!industry) {
+        throw new BadRequestException(`Industry "${industryId}" not found`);
+      }
+      
+      industryId = industry.id;
+    }
+
     const company = await this.companiesRepository.createWithUser(
       {
         name: step1Dto.companyName,
-        industryId: step1Dto.industryId,
+        industryId: industryId,
         hasCompletedSetup: false,
         hasBeenEvaluated: false,
       },
