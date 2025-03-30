@@ -101,12 +101,11 @@ export class Step1Dto {
   companyName: string;
 
   @ApiProperty({
-    description: "Unique identifier for the company's industry sector",
+    description: "Unique identifier or name of the company's industry sector",
     example: '123e4567-e89b-12d3-a456-426614174000',
-    format: 'uuid',
     required: true,
   })
-  @IsUUID()
+  @IsString()
   @IsNotEmpty()
   industryId: string;
 

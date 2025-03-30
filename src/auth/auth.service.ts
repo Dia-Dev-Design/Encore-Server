@@ -50,9 +50,10 @@ export class AuthService {
       accessToken: this.jwtService.sign({
         userId: newUser.id,
         email: newUser.email,
-        isAdmin: newUser.isAdmin,
+        isAdmin: false,
       }),
       user: newUser,
+      isAdmin: false,
     };
   }
 
@@ -72,7 +73,6 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
-    // console.log('')
     const user = await this.userService.findByEmail(loginDto.email);
     if (!user) {
       throw new NotFoundException('User not found');
