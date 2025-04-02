@@ -30,16 +30,15 @@ import { ChatLawyerService } from './chat-lawyer.service';
 import { z } from 'zod';
 import dotenv from 'dotenv';
 import { PoolConfig } from 'pg';
-import pg from 'pg';
 import { MessagesAnnotation } from '@langchain/langgraph';
 import axios from 'axios';
 import { UserTypeEnum } from 'src/user/enums/user-type.enum';
 import { ChatbotLawyerReqStatusEnum, ChatLawyerStatus, ChatTypeEnum } from '../enums/chatbot.enum';
 import { DocHubService } from 'src/dochub/services/dochub.service';
 import { Prisma } from '@prisma/client';
+import { DatabaseService } from 'src/database/database.service';
 
 dotenv.config();
-const { Pool } = pg;
 
 enum Sentiment {
   GOOD = 'GOOD',
@@ -53,7 +52,6 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   private embeddings: OpenAIEmbeddings;
   private agent: ReturnType<typeof createReactAgent>;
   private splitter: RecursiveCharacterTextSplitter;
-  private pgPool: pg.Pool | null = null;
   private initialized = false;
 
   private agentCache: Map<string, ReturnType<typeof createReactAgent>> = new Map();
@@ -63,7 +61,8 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chatLawyerService: ChatLawyerService,
-    private readonly docHubService: DocHubService
+    private readonly docHubService: DocHubService,
+    private readonly databaseService: DatabaseService
   ) {
     // Constructor now does minimal work, initialization happens lazily
   }
@@ -110,7 +109,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
     try {
       // If agent for this userId is already cached and connections are alive, return it
-      if (this.agentCache.has(cacheKey) && this.pgPool && !this.pgPool.ended) {
+      if (this.agentCache.has(cacheKey)) {
         this.agent = this.agentCache.get(cacheKey)!;
         this.currentFileId = cacheKey;
         console.log(`Using cached agent for userId: ${cacheKey}`);
@@ -119,13 +118,135 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       console.log(`Initializing new agent for userId: ${cacheKey}`);
 
-      await this.closeConnections();
+      // Try to explicitly validate the database connection before creating the saver
+      try {
+        // Check if the connection is working
+        const isDbConnected = await this.databaseService.checkConnection();
+        if (!isDbConnected) {
+          console.error('Database connection check failed before agent initialization');
+          throw new Error('Database connection is not available');
+        }
 
+        console.log('Database connection validated before creating PostgresSaver');
+      } catch (dbError) {
+        console.error('Failed to validate database connection:', dbError);
+        throw new HttpException(
+          'Cannot initialize chatbot: Database connection failed',
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+
+      // Define tools outside of the PostgresSaver creation
       const retrieveSchema = z.object({ query: z.string() });
       const retrieve = tool(
         async ({ query }) => {
           try {
-            // Check for different types of document queries
+            // Check for multi-document summary requests FIRST (more specific pattern)
+            const isMultiDocumentSummaryQuery =
+              /summar(y|ize|ies)|overview|all( of)? (my |the )?documents?/i.test(query);
+
+            if (isMultiDocumentSummaryQuery) {
+              try {
+                console.log(`[RETRIEVE] Handling multi-document summary query`);
+                const userDocs = await this.docHubService.getUserDocuments(userId);
+
+                if (userDocs.length === 0) {
+                  return ['You have not uploaded any documents yet.', []];
+                }
+
+                // Process each document and get summaries
+                const documentSummaries = [];
+                let allResults: Document[] = [];
+
+                // Process up to 5 documents to avoid overwhelming responses
+                const docsToProcess = userDocs.slice(0, 5);
+
+                console.log(`[RETRIEVE] Processing ${docsToProcess.length} documents for summary`);
+
+                for (const doc of docsToProcess) {
+                  console.log(`[RETRIEVE] Getting summary for: ${doc.fileName}`);
+
+                  // For each document, get key chunks
+                  try {
+                    // Get 3 chunks per document - typically first, middle, and end provide good coverage
+                    const docResults = await this.docHubService.similaritySearch(
+                      'summary overview introduction conclusion',
+                      3,
+                      { user_id: userId, file_id: doc.fileId }
+                    );
+
+                    if (docResults.length > 0) {
+                      // Add document metadata to each result
+                      docResults.forEach((result) => {
+                        result.metadata.documentName = doc.fileName;
+                      });
+
+                      // Create document summary entry
+                      const docContent = docResults.map((chunk) => chunk.pageContent).join('\n\n');
+                      documentSummaries.push({
+                        fileName: doc.fileName,
+                        content: docContent,
+                      });
+
+                      allResults = [...allResults, ...docResults];
+                    } else {
+                      // If no results from similarity search, try direct retrieval
+                      const directChunks = await this.docHubService.getDocumentChunks(
+                        doc.fileId,
+                        userId,
+                        3
+                      );
+
+                      if (directChunks && directChunks.length > 0) {
+                        directChunks.forEach((result) => {
+                          result.metadata.documentName = doc.fileName;
+                        });
+
+                        const docContent = directChunks
+                          .map((chunk) => chunk.pageContent)
+                          .join('\n\n');
+                        documentSummaries.push({
+                          fileName: doc.fileName,
+                          content: docContent,
+                        });
+
+                        allResults = [...allResults, ...directChunks];
+                      } else {
+                        // If still no results, add a placeholder
+                        documentSummaries.push({
+                          fileName: doc.fileName,
+                          content:
+                            'This document appears to be empty or contains no extractable text content.',
+                        });
+                      }
+                    }
+                  } catch (docError) {
+                    console.error(
+                      `[RETRIEVE] Error processing document ${doc.fileName}:`,
+                      docError
+                    );
+                    documentSummaries.push({
+                      fileName: doc.fileName,
+                      content: 'Error retrieving content for this document.',
+                    });
+                  }
+                }
+
+                // Format the results into a user-friendly response
+                const formattedSummaries = documentSummaries
+                  .map((summary) => `## ${summary.fileName}\n\n${summary.content}`)
+                  .join('\n\n---\n\n');
+
+                const responseText = `Here are summaries from your documents:\n\n${formattedSummaries}`;
+
+                return [responseText, allResults];
+              } catch (error) {
+                console.error(`[RETRIEVE] Error handling multi-document summary:`, error);
+                return ['I encountered an error while trying to summarize your documents.', []];
+              }
+            }
+
+            // Check for different types of document queries SECOND (more general pattern)
             const isGeneralDocumentQuery =
               /what|list|tell|any|documents|files|uploaded|shared|have i/i.test(query);
 
@@ -185,11 +306,38 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
             // If no exact matches, try looser matching (e.g., 'legal' matches 'legal.pdf')
             if (matchingDocs.length === 0) {
-              for (const doc of userDocs) {
-                const fileNameWithoutExt = doc.fileName.toLowerCase().split('.')[0];
-                if (queryLower.includes(fileNameWithoutExt)) {
-                  matchingDocs.push(doc);
-                  console.log(`[RETRIEVE] Found partial document match: ${doc.fileName}`);
+              // Check for keywords that might indicate document types
+              const documentTypeKeywords = {
+                legal: ['legal', 'law', 'contract', 'agreement'],
+                resume: ['resume', 'cv', 'curriculum vitae'],
+                entrepreneur: ['entrepreneur', 'business', 'guide'],
+              };
+
+              // Try matching document types first
+              for (const [docType, keywords] of Object.entries(documentTypeKeywords)) {
+                if (keywords.some((keyword) => queryLower.includes(keyword))) {
+                  // Find documents that might match this type
+                  const potentialMatches = userDocs.filter((doc) =>
+                    doc.fileName.toLowerCase().includes(docType)
+                  );
+
+                  if (potentialMatches.length > 0) {
+                    console.log(
+                      `[RETRIEVE] Found ${potentialMatches.length} potential matches for "${docType}" document type`
+                    );
+                    matchingDocs.push(...potentialMatches);
+                  }
+                }
+              }
+
+              // If still no matches, try filename parts
+              if (matchingDocs.length === 0) {
+                for (const doc of userDocs) {
+                  const fileNameWithoutExt = doc.fileName.toLowerCase().split('.')[0];
+                  if (queryLower.includes(fileNameWithoutExt)) {
+                    matchingDocs.push(doc);
+                    console.log(`[RETRIEVE] Found partial document match: ${doc.fileName}`);
+                  }
                 }
               }
             }
@@ -205,74 +353,138 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
               for (const doc of matchingDocs) {
                 console.log(`[RETRIEVE] Searching within document: ${doc.fileName}`);
 
-                // Create a more general search query without the document name
-                const docNameWithoutExt = doc.fileName.split('.')[0].toLowerCase();
-                const generalizedQuery = query
-                  .toLowerCase()
-                  .replace(doc.fileName.toLowerCase(), '')
-                  .replace(docNameWithoutExt, '')
-                  .replace(/of|about|summary|summarize|my|the/gi, '')
-                  .trim();
+                // Create a more targeted search query that's specific to the document content
+                // rather than just removing the document name
 
-                console.log(`[RETRIEVE] Using generalized query: "${generalizedQuery || query}"`);
+                // First, extract what the user wants to know about the document
+                const documentQuery = query;
+                const docNameWithoutExt = doc.fileName.split('.')[0].toLowerCase();
+
+                // Extract what the user wants to know about the document
+                // Look for patterns like "tell me about X in the document" or "what does the document say about X"
+                const contentPatterns = [
+                  /(?:tell|show|give|what).*?(?:about|regarding|concerning)\s+(.+?)(?:\s+in|\s+of|\s+from|\s+within|\s+the|\s+this|\s*$)/i,
+                  /(?:what|how|who|when|where|why).*?(?:in|of|from|within|the|this)\s+.*?(?:about|regarding|concerning)\s+(.+?)(?:\s+in|\s+of|\s+from|\s+within|\s+the|\s+this|\s*$)/i,
+                  /(?:content|information|details|summary|overview|explanation)\s+(?:of|about|regarding|on|for)\s+(.+?)(?:\s+in|\s+of|\s+from|\s+within|\s+the|\s+this|\s*$)/i,
+                ];
+
+                let specificContent = '';
+                for (const pattern of contentPatterns) {
+                  const match = query.match(pattern);
+                  if (match && match[1]) {
+                    specificContent = match[1].trim();
+                    break;
+                  }
+                }
+
+                // If we found specific content focus, use it; otherwise use more general terms
+                const searchTerms =
+                  specificContent ||
+                  (queryLower.includes('overview')
+                    ? 'overview summary introduction conclusion'
+                    : queryLower.includes('content')
+                      ? 'content main_points key_sections'
+                      : 'main content summary key points');
 
                 const filterParams = {
                   user_id: userId,
                   file_id: doc.fileId,
                 };
 
-                // If generalized query is too short, just return all chunks from that document
-                const searchQuery = generalizedQuery.length > 3 ? generalizedQuery : '';
-
-                // First try with similarity search
-                let docResults = await this.docHubService.similaritySearch(
-                  searchQuery || query,
-                  searchQuery ? 3 : 10,
-                  filterParams
-                );
-                console.log(
-                  `[RETRIEVE] Found ${docResults.length} results for ${doc.fileName} with similarity search`
-                );
-
-                // If no results with similarity search, try retrieving chunks directly
-                if (docResults.length === 0) {
+                // Check if this is an "overall contents" type query (very general)
+                if (
+                  (queryLower.includes('overall') && queryLower.includes('content')) ||
+                  (queryLower.includes('tell') &&
+                    queryLower.includes('about') &&
+                    !specificContent) ||
+                  (queryLower.includes('what') && queryLower.includes('in') && !specificContent) ||
+                  (queryLower.startsWith('summarize ') && !specificContent)
+                ) {
                   console.log(
-                    `[RETRIEVE] No results found with similarity search, trying direct document retrieval`
+                    `[RETRIEVE] Detected general content request for the entire document`
+                  );
+                  // For overall document requests, use broader search terms but maintain document context
+                  let docResults = [];
+                  docResults = await this.docHubService.getDocumentChunks(doc.fileId, userId, 5);
+
+                  console.log(
+                    `[RETRIEVE] Retrieved ${docResults.length} chunks directly for overall content request`
                   );
 
-                  try {
-                    // Get the raw document content directly
-                    const rawDocResults = await this.docHubService.getDocumentChunks(
-                      doc.fileId,
-                      userId,
-                      5
+                  // If direct chunk retrieval didn't work, fall back to similarity search
+                  if (docResults.length === 0) {
+                    console.log(`[RETRIEVE] Falling back to similarity search for overall content`);
+                    docResults = await this.docHubService.similaritySearch(
+                      'introduction overview summary conclusion main points',
+                      5,
+                      filterParams
+                    );
+                  }
+
+                  // Add document name to each result's metadata for better context
+                  docResults.forEach((result) => {
+                    result.metadata.documentName = doc.fileName;
+                  });
+
+                  allResults = [...allResults, ...docResults];
+                } else {
+                  // Standard search process for specific content
+                  console.log(`[RETRIEVE] Using document-specific search terms: "${searchTerms}"`);
+
+                  // Try with similarity search first
+                  let docResults = [];
+                  docResults = await this.docHubService.similaritySearch(
+                    searchTerms,
+                    5, // Increase from 3 to 5 for better coverage
+                    filterParams
+                  );
+
+                  console.log(
+                    `[RETRIEVE] Found ${docResults.length} results for ${doc.fileName} with similarity search`
+                  );
+
+                  // If no results with similarity search, try retrieving chunks directly
+                  if (docResults.length === 0) {
+                    console.log(
+                      `[RETRIEVE] No results found with similarity search, trying direct document retrieval`
                     );
 
-                    if (rawDocResults && rawDocResults.length > 0) {
-                      console.log(
-                        `[RETRIEVE] Retrieved ${rawDocResults.length} chunks directly from document`
-                      );
-                      docResults = rawDocResults;
-                    } else {
-                      console.log(
-                        `[RETRIEVE] Document appears to have no content in the database!`
+                    try {
+                      // Get the raw document content directly
+                      const rawDocResults = await this.docHubService.getDocumentChunks(
+                        doc.fileId,
+                        userId,
+                        5
                       );
 
-                      // Check if the document exists in the database at all
-                      const checkResult = await this.docHubService.checkDocumentExists(doc.fileId);
-                      console.log(`[RETRIEVE] Document exists check: ${checkResult}`);
+                      if (rawDocResults && rawDocResults.length > 0) {
+                        console.log(
+                          `[RETRIEVE] Retrieved ${rawDocResults.length} chunks directly from document`
+                        );
+                        docResults = rawDocResults;
+                      } else {
+                        console.log(
+                          `[RETRIEVE] Document appears to have no content in the database!`
+                        );
+
+                        // Check if the document exists in the database at all
+                        const checkResult = await this.docHubService.checkDocumentExists(
+                          doc.fileId
+                        );
+                        console.log(`[RETRIEVE] Document exists check: ${checkResult}`);
+                      }
+                    } catch (error) {
+                      console.error(`[RETRIEVE] Error retrieving raw document chunks:`, error);
                     }
-                  } catch (error) {
-                    console.error(`[RETRIEVE] Error retrieving raw document chunks:`, error);
                   }
+
+                  // Add document name to each result's metadata for better context
+                  docResults.forEach((result) => {
+                    result.metadata.documentName = doc.fileName;
+                  });
+
+                  allResults = [...allResults, ...docResults];
                 }
-
-                // Add document name to each result's metadata for better context
-                docResults.forEach((result) => {
-                  result.metadata.documentName = doc.fileName;
-                });
-
-                allResults = [...allResults, ...docResults];
               }
 
               if (allResults.length === 0) {
@@ -342,7 +554,97 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
             // 5. Now perform the main query search
             console.log(`[RETRIEVE] Searching for query: "${query}"`);
-            const filterParams = userId ? { user_id: userId } : {};
+            let documentContext = null;
+            if (matchingDocs.length === 0) {
+              // Check if query mentions any document type keywords
+              const docTypeKeywords = {
+                legal: ['legal', 'law', 'contract', 'agreement', 'terms'],
+                resume: ['resume', 'cv', 'curriculum vitae'],
+                entrepreneur: ['entrepreneur', 'business guide', 'business plan'],
+              };
+
+              for (const [docType, keywords] of Object.entries(docTypeKeywords)) {
+                if (keywords.some((keyword) => queryLower.includes(keyword))) {
+                  // Find the first document that matches this type
+                  const match = userDocs.find((doc) =>
+                    doc.fileName.toLowerCase().includes(docType)
+                  );
+
+                  if (match) {
+                    console.log(
+                      `[RETRIEVE] Query contains "${docType}" keyword, focusing on document: ${match.fileName}`
+                    );
+                    documentContext = match;
+                    break;
+                  }
+                }
+              }
+            } else if (matchingDocs.length === 1) {
+              // If we had exactly one matching document but couldn't find anything in it,
+              // we should still search only within that document
+              documentContext = matchingDocs[0];
+              console.log(
+                `[RETRIEVE] Maintaining context to document: ${documentContext.fileName}`
+              );
+            }
+
+            // Check if this is a general content/overview query
+            const isOverallContentsQuery =
+              (queryLower.includes('overall') && queryLower.includes('content')) ||
+              (queryLower.includes('tell') &&
+                queryLower.includes('about') &&
+                queryLower.includes('document')) ||
+              (queryLower.includes('contents') &&
+                queryLower.includes('of') &&
+                queryLower.includes('document')) ||
+              (queryLower.includes('what') &&
+                queryLower.includes('in') &&
+                queryLower.includes('document'));
+
+            // If this is a general content query and we have a document context, use direct retrieval
+            if (isOverallContentsQuery && documentContext) {
+              console.log(
+                `[RETRIEVE] Detected overall contents query for document: ${documentContext.fileName}`
+              );
+
+              // Get chunks directly from the document
+              const documentChunks = await this.docHubService.getDocumentChunks(
+                documentContext.fileId,
+                userId,
+                5
+              );
+
+              console.log(
+                `[RETRIEVE] Retrieved ${documentChunks.length} chunks directly from document`
+              );
+
+              if (documentChunks.length > 0) {
+                // Add document name to results
+                documentChunks.forEach((chunk) => {
+                  chunk.metadata.documentName = documentContext.fileName;
+                });
+
+                // Format and return the results
+                const serialized = documentChunks
+                  .map(
+                    (doc) =>
+                      `Source: ${doc.metadata.documentName || doc.metadata.source}\nContent: ${doc.pageContent}`
+                  )
+                  .join('\n\n---\n\n');
+
+                return [serialized, documentChunks];
+              }
+              // If no chunks found, continue with regular search
+            }
+
+            // Apply the appropriate filters based on context
+            const filterParams = userId
+              ? documentContext
+                ? { user_id: userId, file_id: documentContext.fileId }
+                : { user_id: userId }
+              : {};
+
+            console.log(`[RETRIEVE] Applied filter parameters:`, filterParams);
             const retrievedDocs = await this.docHubService.similaritySearch(query, 5, filterParams);
 
             // 6. Combine the business context with the query results
@@ -467,28 +769,21 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         }
       );
 
-      /**
-       * Database connection pool configuration optimized for Supabase free tier which has a hard limit of 10 concurrent connections.
-       *
-       * Performance vs Stability tradeoff:
-       * - Lower 'max' (3): Fewer concurrent DB operations but avoids connection errors
-       * - Zero 'min' (0): No idle connections kept open, slightly slower initial queries
-       * - Lower idle timeout: Releases unused connections faster to free up resources
-       *
-       * This should keep us under the 10-connection limit in development while maintaining reasonable performance.
-       */
-      this.pgPool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: {
-          rejectUnauthorized: false,
-        },
-        max: 2,
-        min: 0,
-        idleTimeoutMillis: 5000,
-        connectionTimeoutMillis: 5000,
-      });
+      // Use PostgresSQL connection string directly with saver - with better error handling
+      let checkpointSaver;
+      try {
+        console.log('Creating PostgresSaver with database connection info');
+        // Use the shared database pool directly with PostgresSaver
+        checkpointSaver = new PostgresSaver(this.databaseService.getPool());
+        console.log('PostgresSaver created successfully');
+      } catch (saverError) {
+        console.error('Failed to create PostgresSaver:', saverError);
+        throw new HttpException(
+          'Error initializing agent persistence layer',
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
 
-      const checkpointSaver = new PostgresSaver(this.pgPool);
       this.agent = await createReactAgent({
         llm: this.llm,
         tools: userId ? [retrieve, searchTool] : [searchTool],
@@ -535,10 +830,6 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 - Providing non-legal information
                 - Summarizing factual information from documents without legal analysis
                 - Responding to general chat or small talk
-
-                If searching for documents:
-                - If no relevant documents are found using the **retrieve tool**, clearly inform the user while offering alternative assistance
-                - When documents are found, cite them appropriately in your response
                 `
               ),
               ...state.messages,
@@ -565,7 +856,6 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       console.log(`Agent initialized and cached for userId: ${cacheKey}`);
     } catch (error) {
       console.error(`Error initializing agent for userId ${userId}:`, error);
-      await this.closeConnections();
       throw new HttpException(
         `Error initializing chatbot: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
@@ -1482,23 +1772,17 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
   async closeConnections() {
     try {
-      if (this.pgPool) {
-        await this.pgPool.end();
-        this.pgPool = null;
-      }
-
-      // Clear the current fileId
+      // We no longer need to close the pool since it's managed by DatabaseService
+      // Just clear the current fileId
       this.currentFileId = null;
     } catch (error) {
-      console.error('Error closing database connections:', error);
+      console.error('Error closing connections:', error);
     }
   }
 
   // Implement OnModuleDestroy
   async onModuleDestroy() {
-    console.log(
-      'ChatbotService is being destroyed. Closing database connections and clearing agent cache...'
-    );
+    console.log('ChatbotService is being destroyed. Clearing agent cache...');
     // Clear the agent cache
     this.agentCache.clear();
     await this.closeConnections();

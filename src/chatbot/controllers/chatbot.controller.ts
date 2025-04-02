@@ -255,13 +255,10 @@ export class ChatbotController {
     // Validate inputs
     if (!thread_id || !prompt) {
       response.write(
-        `data: ${JSON.stringify({ error: 'Thread ID and prompt are required' })}\n\n`,
+        `data: ${JSON.stringify({ error: 'Thread ID and prompt are required', isErrorEvent: true })}\n\n`
       );
       // Use type assertion to avoid TypeScript error with flush
-      if (
-        'flush' in response &&
-        typeof (response as any).flush === 'function'
-      ) {
+      if ('flush' in response && typeof (response as any).flush === 'function') {
         (response as any).flush();
       }
       response.end();
@@ -275,23 +272,41 @@ export class ChatbotController {
     response.setHeader('Access-Control-Allow-Origin', '*');
     response.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering if using nginx
 
-    try {
-      // Verify thread access before starting stream
-      const thread = await this.chatbotService.getThread(
-        thread_id,
-        req?.user?.id,
-      );
-      if (!thread) {
+    // Create a timeout safety mechanism
+    let isResponseEnded = false;
+    const streamTimeout = setTimeout(() => {
+      if (!isResponseEnded) {
+        console.error('Stream timeout triggered after 60 seconds');
         response.write(
-          `data: ${JSON.stringify({ error: 'Thread not found or access denied' })}\n\n`,
+          `data: ${JSON.stringify({
+            error: 'Stream timeout - operation took too long',
+            isErrorEvent: true,
+          })}\n\n`
         );
-        // Use type assertion to avoid TypeScript error with flush
-        if (
-          'flush' in response &&
-          typeof (response as any).flush === 'function'
-        ) {
+        if ('flush' in response && typeof (response as any).flush === 'function') {
           (response as any).flush();
         }
+        isResponseEnded = true;
+        response.end();
+      }
+    }, 60000); // 60 second timeout
+
+    try {
+      // Verify thread access before starting stream
+      const thread = await this.chatbotService.getThread(thread_id, req?.user?.id);
+      if (!thread) {
+        response.write(
+          `data: ${JSON.stringify({
+            error: 'Thread not found or access denied',
+            isErrorEvent: true,
+          })}\n\n`
+        );
+        // Use type assertion to avoid TypeScript error with flush
+        if ('flush' in response && typeof (response as any).flush === 'function') {
+          (response as any).flush();
+        }
+        clearTimeout(streamTimeout);
+        isResponseEnded = true;
         response.end();
         return;
       }
@@ -305,21 +320,46 @@ export class ChatbotController {
         thread_id,
         prompt,
         fileId || null,
-        // Pass a callback to handle each chunk
+        // Pass a callback to handle each chunk with improved error handling
         (chunk) => {
-          response.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
-          // Use type assertion to avoid TypeScript error with flush
-          if (
-            'flush' in response &&
-            typeof (response as any).flush === 'function'
-          ) {
-            (response as any).flush();
+          try {
+            if (!isResponseEnded) {
+              response.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
+              // Use type assertion to avoid TypeScript error with flush
+              if ('flush' in response && typeof (response as any).flush === 'function') {
+                (response as any).flush();
+              }
+            }
+          } catch (chunkError) {
+            console.error('Error sending chunk to client:', chunkError);
+            if (!isResponseEnded) {
+              try {
+                response.write(
+                  `data: ${JSON.stringify({
+                    error: 'Error processing response chunk',
+                    isErrorEvent: true,
+                  })}\n\n`
+                );
+                if ('flush' in response && typeof (response as any).flush === 'function') {
+                  (response as any).flush();
+                }
+              } catch (writeError) {
+                console.error('Failed to write error to stream:', writeError);
+              }
+            }
           }
-        },
+        }
       );
 
-      response.end();
+      clearTimeout(streamTimeout);
+      if (!isResponseEnded) {
+        // Send a final "done" event to ensure the client knows streaming is complete
+        response.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        isResponseEnded = true;
+        response.end();
+      }
     } catch (error) {
+      clearTimeout(streamTimeout);
       console.error('Error streaming prompt:', error);
 
       // Extract a meaningful error message
@@ -330,16 +370,25 @@ export class ChatbotController {
         errorMessage = error.message;
       }
 
-      // Send the error to the client
-      response.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
-      // Use type assertion to avoid TypeScript error with flush
-      if (
-        'flush' in response &&
-        typeof (response as any).flush === 'function'
-      ) {
-        (response as any).flush();
+      // Send the error to the client if response not already ended
+      if (!isResponseEnded) {
+        try {
+          response.write(
+            `data: ${JSON.stringify({
+              error: errorMessage,
+              isErrorEvent: true,
+            })}\n\n`
+          );
+          // Use type assertion to avoid TypeScript error with flush
+          if ('flush' in response && typeof (response as any).flush === 'function') {
+            (response as any).flush();
+          }
+        } catch (writeError) {
+          console.error('Failed to write error to stream:', writeError);
+        }
+        isResponseEnded = true;
+        response.end();
       }
-      response.end();
     }
   }
 

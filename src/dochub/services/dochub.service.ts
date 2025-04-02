@@ -14,24 +14,23 @@ import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PoolConfig } from 'pg';
-import pg from 'pg';
-import dotenv from 'dotenv';
 import { Document } from '@langchain/core/documents';
 import { S3Service } from 'src/s3/s3.service';
+import { DatabaseService } from 'src/database/database.service';
+import dotenv from 'dotenv';
 dotenv.config();
-const { Pool } = pg;
 
 @Injectable()
 export class DocHubService implements OnModuleInit, OnModuleDestroy {
   private embeddings: OpenAIEmbeddings;
   private vectorStore: PGVectorStore | null = null;
   private splitter: RecursiveCharacterTextSplitter;
-  private pgPool: pg.Pool | null = null;
   private initialized = false;
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly s3Service: S3Service
+    private readonly s3Service: S3Service,
+    private readonly databaseService: DatabaseService
   ) {}
 
   private async ensureInitialized() {
@@ -60,7 +59,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         ssl: {
           rejectUnauthorized: false,
         },
-      } as PoolConfig,
+      },
       tableName: 'vectorstore',
       columns: {
         idColumnName: 'id',
@@ -93,13 +92,8 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         await this.vectorStore.end();
         this.vectorStore = null;
       }
-
-      if (this.pgPool) {
-        await this.pgPool.end();
-        this.pgPool = null;
-      }
     } catch (error) {
-      console.error('Error closing database connections:', error);
+      console.error('Error closing vector store connections:', error);
     }
   }
 
@@ -309,16 +303,13 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
   async getUsersByLawyer(lawyerId: string) {
     try {
       const lawyer = await this.prisma.staffUser.findFirst({
-        where: { 
+        where: {
           id: lawyerId,
         },
       });
 
       if (!lawyer) {
-        throw new HttpException(
-          'Lawyer not found or user is not a lawyer',
-          HttpStatus.NOT_FOUND
-        );
+        throw new HttpException('Lawyer not found or user is not a lawyer', HttpStatus.NOT_FOUND);
       }
 
       const lawyerUsers = await this.prisma.lawyerUsers.findMany({
@@ -328,16 +319,16 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
             select: {
               id: true,
               name: true,
-              email: true
-            }
-          }
-        }
+              email: true,
+            },
+          },
+        },
       });
 
-      return lawyerUsers.map(lu => ({
+      return lawyerUsers.map((lu) => ({
         userId: lu.userId,
         name: lu.user.name,
-        email: lu.user.email
+        email: lu.user.email,
       }));
     } catch (error) {
       console.error('Error fetching users by lawyer:', error);
@@ -359,35 +350,39 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
       console.log(`[DOCHUB] Starting similarity search for query: "${query}"`);
       console.log(`[DOCHUB] Filter parameters:`, filterParams);
       console.log(`[DOCHUB] Number of results requested: ${k}`);
-      const config = {
-        postgresConnectionOptions: {
-          connectionString: process.env.DATABASE_URL,
-          ssl: {
-            rejectUnauthorized: false,
-          },
-        } as PoolConfig,
-        tableName: 'vectorstore',
-        columns: {
-          idColumnName: 'id',
-          vectorColumnName: 'embedding',
-          contentColumnName: 'content',
-          metadataColumnName: 'metadata',
-        },
-        distanceStrategy: 'cosine' as DistanceStrategy,
-      };
 
-      console.log('this is the databaseurl', process.env.DATABASE_URL);
-
-      if (this.vectorStore) {
-        await this.vectorStore.end();
-      }
-
-      this.vectorStore = await PGVectorStore.initialize(this.embeddings, config);
+      const pool = this.databaseService.getPool();
+      let localVectorStore = null;
 
       try {
+        // Create a new vector store instance for this search operation
+        // WITHOUT closing the existing this.vectorStore
+        const config = {
+          postgresConnectionOptions: {
+            connectionString: process.env.DATABASE_URL,
+            ssl: {
+              rejectUnauthorized: false,
+            },
+            connectionTimeoutMillis: 30000,
+            query_timeout: 60000,
+          },
+          tableName: 'vectorstore',
+          columns: {
+            idColumnName: 'id',
+            vectorColumnName: 'embedding',
+            contentColumnName: 'content',
+            metadataColumnName: 'metadata',
+          },
+          distanceStrategy: 'cosine' as DistanceStrategy,
+        };
+
+        console.log(`[DOCHUB] Creating vector store instance for search operation`);
+        localVectorStore = await PGVectorStore.initialize(this.embeddings, config);
+
         console.log(`[DOCHUB] Executing vector search in database...`);
-        const results = await this.vectorStore.similaritySearch(query, k, filterParams);
+        const results = await localVectorStore.similaritySearch(query, k, filterParams);
         console.log(`[DOCHUB] Search complete. Found ${results.length} results.`);
+
         if (results.length > 0) {
           console.log(
             `[DOCHUB] Result metadata sample:`,
@@ -419,11 +414,18 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         } else {
           console.log(`[DOCHUB] No results found for this query with the given filters.`);
         }
+
         return results;
       } finally {
-        if (this.vectorStore) {
-          await this.vectorStore.end();
-          this.vectorStore = null;
+        // Only close the local vector store instance created for this operation
+        if (localVectorStore) {
+          try {
+            console.log(`[DOCHUB] Closing search-specific vector store instance`);
+            await localVectorStore.end();
+          } catch (closeError) {
+            console.error(`[DOCHUB] Error closing vector store instance:`, closeError);
+            // Don't throw here, as we still want to return results if we have them
+          }
         }
       }
     } catch (error) {
@@ -468,13 +470,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
     try {
       console.log(`[DOCHUB] Retrieving raw chunks for file: ${fileId}, user: ${userId}`);
 
-      // Connect to the database directly
-      const pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: {
-          rejectUnauthorized: false,
-        },
-      });
+      const pool = this.databaseService.getPool();
 
       try {
         // Query to get document chunks by file_id and user_id without vector similarity
@@ -496,8 +492,9 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
             metadata: row.metadata,
           });
         });
-      } finally {
-        await pool.end();
+      } catch (error) {
+        console.error('Error querying document chunks:', error);
+        return [];
       }
     } catch (error) {
       console.error('Error retrieving document chunks:', error);
@@ -514,13 +511,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
     try {
       console.log(`[DOCHUB] Checking if document exists: ${fileId}`);
 
-      // Connect to the database directly
-      const pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: {
-          rejectUnauthorized: false,
-        },
-      });
+      const pool = this.databaseService.getPool();
 
       try {
         // Query to check if any rows exist with this file_id
@@ -535,8 +526,9 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         console.log(`[DOCHUB] Document ${fileId} has ${count} chunks in database`);
 
         return count > 0;
-      } finally {
-        await pool.end();
+      } catch (error) {
+        console.error('Error checking document existence:', error);
+        return false;
       }
     } catch (error) {
       console.error('Error checking document existence:', error);
@@ -557,13 +549,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
       const userDocs = await this.getUserDocuments(userId);
       const results = [];
 
-      // Connect to the database for direct queries
-      const pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: {
-          rejectUnauthorized: false,
-        },
-      });
+      const pool = this.databaseService.getPool();
 
       try {
         // Check each document
@@ -607,8 +593,9 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         }
 
         return results;
-      } finally {
-        await pool.end();
+      } catch (error) {
+        console.error('Error in vectorization check query:', error);
+        throw error;
       }
     } catch (error) {
       console.error('Error checking documents vectorization:', error);
