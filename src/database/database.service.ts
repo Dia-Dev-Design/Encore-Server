@@ -131,10 +131,14 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
    */
   async checkConnection(): Promise<boolean> {
     try {
+      // Get a client with an explicit timeout
       const client = await this.pool.connect();
-      await client.query('SELECT 1');
-      client.release();
-      return true;
+      try {
+        await client.query('SELECT 1');
+        return true;
+      } finally {
+        client.release();
+      }
     } catch (error) {
       console.error('Database connection check failed:', error);
       return false;

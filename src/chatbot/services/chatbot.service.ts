@@ -109,32 +109,66 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
     try {
       // If agent for this userId is already cached and connections are alive, return it
-      if (this.agentCache.has(cacheKey)) {
-        this.agent = this.agentCache.get(cacheKey)!;
-        this.currentFileId = cacheKey;
-        console.log(`Using cached agent for userId: ${cacheKey}`);
-        return;
-      }
-
-      console.log(`Initializing new agent for userId: ${cacheKey}`);
-
-      // Try to explicitly validate the database connection before creating the saver
-      try {
-        // Check if the connection is working
-        const isDbConnected = await this.databaseService.checkConnection();
-        if (!isDbConnected) {
-          console.error('Database connection check failed before agent initialization');
-          throw new Error('Database connection is not available');
+        try {
+    // Check database connection with retry logic
+    let connected = false;
+    let retries = 3;
+    
+    while (!connected && retries > 0) {
+      connected = await this.databaseService.checkConnection();
+      if (!connected) {
+        retries--;
+        if (retries > 0) {
+          console.log(`Database connection failed, retrying... (${retries} attempts left)`);
+          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
         }
-
-        console.log('Database connection validated before creating PostgresSaver');
-      } catch (dbError) {
-        console.error('Failed to validate database connection:', dbError);
-        throw new HttpException(
-          'Cannot initialize chatbot: Database connection failed',
-          HttpStatus.SERVICE_UNAVAILABLE
-        );
       }
+    }
+    
+    if (!connected) {
+      throw new HttpException('Database connection is not available', HttpStatus.SERVICE_UNAVAILABLE);
+    }
+    
+    // Rest of your initialization code
+  } catch (error) {
+    // Log error details for debugging
+    console.error(`Error initializing agent for userId ${userId}:`, error);
+    
+    if (error instanceof HttpException) {
+      throw error;
+    }
+    
+    throw new HttpException(
+      `Cannot initialize chatbot: ${error.message || 'Unknown error'}`, 
+      HttpStatus.SERVICE_UNAVAILABLE
+    );
+  }
+      // if (this.agentCache.has(cacheKey)) {
+      //   this.agent = this.agentCache.get(cacheKey)!;
+      //   this.currentFileId = cacheKey;
+      //   console.log(`Using cached agent for userId: ${cacheKey}`);
+      //   return;
+      // }
+
+      // console.log(`Initializing new agent for userId: ${cacheKey}`);
+
+      // // Try to explicitly validate the database connection before creating the saver
+      // try {
+      //   // Check if the connection is working
+      //   const isDbConnected = await this.databaseService.checkConnection();
+      //   if (!isDbConnected) {
+      //     console.error('Database connection check failed before agent initialization');
+      //     throw new Error('Database connection is not available');
+      //   }
+
+      //   console.log('Database connection validated before creating PostgresSaver');
+      // } catch (dbError) {
+      //   console.error('Failed to validate database connection:', dbError);
+      //   throw new HttpException(
+      //     'Cannot initialize chatbot: Database connection failed',
+      //     HttpStatus.SERVICE_UNAVAILABLE
+      //   );
+      // }
 
       // Define tools outside of the PostgresSaver creation
       const retrieveSchema = z.object({ query: z.string() });
