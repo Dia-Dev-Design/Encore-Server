@@ -6,10 +6,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { OpenAIEmbeddings } from '@langchain/openai';
-import {
-  PGVectorStore,
-  DistanceStrategy,
-} from '@langchain/community/vectorstores/pgvector';
+import { PGVectorStore, DistanceStrategy } from '@langchain/community/vectorstores/pgvector';
 import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -252,6 +249,42 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async getCompanyDocument(documentId: string, res?: any) {
+    try {
+      const fileRef = await this.prisma.fileReference.findUnique({
+        where: { id: documentId },
+      });
+
+      if (!fileRef) {
+        console.error(`Company document not found with ID: ${documentId}`);
+        throw new HttpException('Company document not found', HttpStatus.NOT_FOUND);
+      }
+
+      // If Express Response is passed, stream the file directly from S3
+      if (res) {
+        await this.s3Service.getObjectStream(fileRef.key, res);
+        return null;
+      }
+
+      // Return file metadata if not streaming
+      return {
+        id: fileRef.id,
+        fileName: fileRef.originalName,
+        fileType: fileRef.fileType,
+        fileSize: fileRef.size,
+        key: fileRef.key,
+        mimeType: fileRef.mimeType,
+        createdAt: fileRef.createdAt,
+      };
+    } catch (error) {
+      console.error('Error getting company document:', error);
+      throw new HttpException(
+        `Error getting company document: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
   async getUserDocumentsWithUrls(userId: string, page: number, limit: number) {
     const skip = (page - 1) * limit;
     const documents = await this.getUserDocuments(userId);
@@ -268,6 +301,49 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
         url: signedUrls[index],
         size: doc.fileSize,
         createdAt: doc.createdAt,
+      })),
+      meta: {
+        totalCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalCount / limit),
+      },
+    };
+  }
+
+  async getCompanyDocumentsWithUrls(companyId: string, page: number, limit: number) {
+    const skip = (page - 1) * limit;
+
+    const folders = await this.prisma.folder.findMany({
+      where: { companyId },
+      select: { id: true },
+    });
+
+    const folderIds = folders.map((f) => f.id);
+
+    const fileRefs = await this.prisma.folderFileReference.findMany({
+      where: {
+        folderId: { in: folderIds },
+      },
+      include: {
+        File: true,
+      },
+    });
+
+    const paginatedRefs = fileRefs.slice(skip, skip + limit);
+    const totalCount = fileRefs.length;
+
+    const keys = paginatedRefs.map((ref) => ref.File.key);
+    const signedUrls = await this.s3Service.getSignedUrls(keys);
+
+    return {
+      data: paginatedRefs.map((ref, index) => ({
+        name: ref.File.originalName || ref.File.key,
+        id: ref.File.id,
+        type: ref.File.mimeType,
+        url: signedUrls[index],
+        size: ref.File.size,
+        createdAt: ref.File.createdAt,
       })),
       meta: {
         totalCount,
@@ -309,16 +385,13 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
   async getUsersByLawyer(lawyerId: string) {
     try {
       const lawyer = await this.prisma.staffUser.findFirst({
-        where: { 
+        where: {
           id: lawyerId,
         },
       });
 
       if (!lawyer) {
-        throw new HttpException(
-          'Lawyer not found or user is not a lawyer',
-          HttpStatus.NOT_FOUND
-        );
+        throw new HttpException('Lawyer not found or user is not a lawyer', HttpStatus.NOT_FOUND);
       }
 
       const lawyerUsers = await this.prisma.lawyerUsers.findMany({
@@ -328,21 +401,52 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
             select: {
               id: true,
               name: true,
-              email: true
-            }
-          }
-        }
+              email: true,
+            },
+          },
+        },
       });
 
-      return lawyerUsers.map(lu => ({
+      return lawyerUsers.map((lu) => ({
         userId: lu.userId,
         name: lu.user.name,
-        email: lu.user.email
+        email: lu.user.email,
       }));
     } catch (error) {
       console.error('Error fetching users by lawyer:', error);
       throw new HttpException(
         `Error fetching users by lawyer: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  async getCompaniesByAdmin(adminId: string) {
+    try {
+      const admin = await this.prisma.staffUser.findFirst({
+        where: { id: adminId },
+      });
+
+      if (!admin) {
+        throw new HttpException('Admin not found', HttpStatus.NOT_FOUND);
+      }
+
+      const companies = await this.prisma.company.findMany({
+        where: { assignedAdminId: adminId },
+        select: {
+          id: true,
+          name: true,
+        },
+      });
+
+      return companies.map((company) => ({
+        companyId: company.id,
+        name: company.name,
+      }));
+    } catch (error) {
+      console.error('Error fetching companies by admin:', error);
+      throw new HttpException(
+        `Error fetching companies by admin: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
