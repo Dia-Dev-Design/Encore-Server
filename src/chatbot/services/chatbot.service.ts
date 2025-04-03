@@ -109,40 +109,43 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
     try {
       // If agent for this userId is already cached and connections are alive, return it
-        try {
-    // Check database connection with retry logic
-    let connected = false;
-    let retries = 3;
-    
-    while (!connected && retries > 0) {
-      connected = await this.databaseService.checkConnection();
-      if (!connected) {
-        retries--;
-        if (retries > 0) {
-          console.log(`Database connection failed, retrying... (${retries} attempts left)`);
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+      try {
+        // Check database connection with retry logic
+        let connected = false;
+        let retries = 3;
+
+        while (!connected && retries > 0) {
+          connected = await this.databaseService.checkConnection();
+          if (!connected) {
+            retries--;
+            if (retries > 0) {
+              console.log(`Database connection failed, retrying... (${retries} attempts left)`);
+              await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
+            }
+          }
         }
+
+        if (!connected) {
+          throw new HttpException(
+            'Database connection is not available',
+            HttpStatus.SERVICE_UNAVAILABLE
+          );
+        }
+      } catch (error) {
+        // Log error details for debugging
+        console.error(`Error initializing agent for userId ${userId}:`, error);
+
+        if (error instanceof HttpException) {
+          throw error;
+        }
+
+        throw new HttpException(
+          `Cannot initialize chatbot: ${error.message || 'Unknown error'}`,
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
       }
-    }
-    
-    if (!connected) {
-      throw new HttpException('Database connection is not available', HttpStatus.SERVICE_UNAVAILABLE);
-    }
-    
-    // Rest of your initialization code
-  } catch (error) {
-    // Log error details for debugging
-    console.error(`Error initializing agent for userId ${userId}:`, error);
-    
-    if (error instanceof HttpException) {
-      throw error;
-    }
-    
-    throw new HttpException(
-      `Cannot initialize chatbot: ${error.message || 'Unknown error'}`, 
-      HttpStatus.SERVICE_UNAVAILABLE
-    );
-  }
+
+      // Rest of your initialization code
       // if (this.agentCache.has(cacheKey)) {
       //   this.agent = this.agentCache.get(cacheKey)!;
       //   this.currentFileId = cacheKey;
