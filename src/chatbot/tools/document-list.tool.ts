@@ -20,7 +20,8 @@ export class DocumentListTool extends Tool {
       const docList = userDocs
         .map((doc) => {
           const uploadDate = new Date(doc.createdAt).toLocaleDateString();
-          return `- ${doc.fileName} (uploaded on ${uploadDate})`;
+          const fileSize = this.formatFileSize(doc.fileSize);
+          return `- ${doc.fileName} (ID: ${doc.fileId}, Type: ${doc.fileType}, Size: ${fileSize}, Uploaded: ${uploadDate})`;
         })
         .join('\n');
 
@@ -31,5 +32,15 @@ export class DocumentListTool extends Tool {
       console.error('Error in document list tool:', error);
       return 'Sorry, I encountered an error while retrieving your document list.';
     }
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes === 0) return '0 Bytes';
+    
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 } 
