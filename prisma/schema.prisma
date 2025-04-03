@@ -39,6 +39,8 @@ model User {
   updatedAt           DateTime              @updatedAt
   isVerified          Boolean               @default(false)
   isAdmin             Boolean               @default(false)
+  isActivated         Boolean               @default(false)
+  registered          Boolean               @default(false)
   ChatCategories      ChatCategory[]
   ChatLawyer          ChatLawyer[]
   ChatLawyerMessage   ChatLawyerMessage[]

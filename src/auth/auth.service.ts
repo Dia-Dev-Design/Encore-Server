@@ -82,6 +82,10 @@ export class AuthService {
       throw new UnauthorizedException('Invalid password');
     }
 
+    // if (!user.isActivated) {
+    //   throw new UnauthorizedException('Account not activated. Please contact an administrator.');
+    // }
+
     return {
       accessToken: this.jwtService.sign({
         userId: user.id,
