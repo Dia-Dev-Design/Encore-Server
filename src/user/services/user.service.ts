@@ -31,6 +31,8 @@ export class UserService {
       name: null,
       phoneNumber: null,
       isAdmin: false,
+      isActivated: false,
+      registered: false,
     });
   }
 
@@ -46,11 +48,13 @@ export class UserService {
       isVerified: true,
       phoneNumber: null,
       isAdmin: false,
+      isActivated: false,
+      registered: false,
     });
   }
 
   async getUser(userJwtPayload: UserJwtPayload) {
-    const user = await this.findById(userJwtPayload.id);
+    const user: any = await this.findById(userJwtPayload.id);
 
     if (!user) {
       throw new NotFoundException('User not found');
@@ -61,10 +65,7 @@ export class UserService {
       (company) => company.hasCompletedSetup,
     );
 
-    // Add the isAdmin property to the user object
-    // This assumes you're either:
-    // 1. Getting this from a database field that wasn't included in your initial query
-    // 2. Setting a default value
+
     const userWithAdmin = {
       ...user,
       // isAdmin: user.isAdmin || false, // Use existing value or default to false
@@ -112,16 +113,10 @@ export class UserService {
     });
 
     if (passwordTokens.length >= 3) {
-      throw new BadRequestException(
-        'Too many password reset requests, try again later',
-      );
+      throw new BadRequestException('Too many password reset requests, try again later');
     }
 
-    return this.userRepository.createResetPasswordToken(
-      email,
-      hashedToken,
-      expiresAt,
-    );
+    return this.userRepository.createResetPasswordToken(email, hashedToken, expiresAt);
   }
 
   async createVerificationToken(user: UserEntity) {
@@ -132,7 +127,7 @@ export class UserService {
     return this.userRepository.createVerificationToken(
       user.email,
       hashedToken,
-      new Date(Date.now() + 1000 * 60 * 60 * 24),
+      new Date(Date.now() + 1000 * 60 * 60 * 24)
     );
   }
 
@@ -168,5 +163,13 @@ export class UserService {
     }
 
     return users;
+  }
+
+  async findNonActivatedUsers(page: number = 1, limit: number = 10) {
+    return this.userRepository.findNonActivatedUsers(page, limit);
+  }
+
+  async activateUser(userId: string) {
+    return this.update(userId, { isActivated: true });
   }
 }

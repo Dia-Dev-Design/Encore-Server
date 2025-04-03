@@ -101,6 +101,15 @@ export class CompaniesRepository {
     });
   }
 
+  getUserCompanyByCompanyId(companyId: string) {
+    return this.prisma.userCompany.findFirst({
+      where: {
+        companyId,
+        role: UserCompanyRole.OWNER,
+      },
+    });
+  }
+
   async upsertEmployeeStateLocations(
     companyId: string,
     states: string[] | undefined,

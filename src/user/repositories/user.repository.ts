@@ -9,6 +9,10 @@ export class UserRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   create(user: OmitCreateProperties<UserEntity>) {
+    if (user.isActivated === undefined) {
+      user.isActivated = false;
+    }
+    
     return this.prisma.user.create({
       data: user,
     });
@@ -122,5 +126,39 @@ export class UserRepository {
       where: { companyId },
       select: { User: true },
     });
+  }
+
+  async findNonActivatedUsers(page: number = 1, limit: number = 10) {
+    const skip = (page - 1) * limit;
+    
+    const [users, totalCount] = await Promise.all([
+      this.prisma.user.findMany({
+        where: {
+          isActivated: false,
+          isAdmin: false,
+        },
+        skip,
+        take: limit,
+        orderBy: {
+          createdAt: 'desc',
+        },
+      }),
+      this.prisma.user.count({
+        where: {
+          isActivated: false,
+          isAdmin: false,
+        },
+      }),
+    ]);
+
+    return {
+      users,
+      pagination: {
+        totalItems: totalCount,
+        totalPages: Math.ceil(totalCount / limit),
+        currentPage: page,
+        limit,
+      },
+    };
   }
 }
