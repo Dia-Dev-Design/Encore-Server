@@ -37,6 +37,10 @@ import { ChatbotLawyerReqStatusEnum, ChatLawyerStatus, ChatTypeEnum } from '../e
 import { DocHubService } from 'src/dochub/services/dochub.service';
 import { Prisma } from '@prisma/client';
 import { DatabaseService } from 'src/database/database.service';
+import { DocumentListTool } from '../tools/document-list.tool';
+import { SimilaritySearchTool } from '../tools/similarity-search.tool';
+import { FileSelectorTool } from '../tools/file-selector.tool';
+import { DocumentVectorsTool } from '../tools/document-vectors.tool';
 
 dotenv.config();
 
@@ -109,699 +113,38 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
     try {
       // If agent for this userId is already cached and connections are alive, return it
-        try {
-    // Check database connection with retry logic
-    let connected = false;
-    let retries = 3;
-    
-    while (!connected && retries > 0) {
-      connected = await this.databaseService.checkConnection();
-      if (!connected) {
-        retries--;
-        if (retries > 0) {
-          console.log(`Database connection failed, retrying... (${retries} attempts left)`);
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second before retry
+      if (this.agentCache.has(cacheKey)) {
+        this.agent = this.agentCache.get(cacheKey)!;
+        this.currentFileId = cacheKey;
+        console.log(`Using cached agent for userId: ${cacheKey}`);
+        return;
+      }
+
+      console.log(`Initializing new agent for userId: ${cacheKey}`);
+
+      // Check database connection with retry logic
+      let connected = false;
+      let retries = 3;
+
+      while (!connected && retries > 0) {
+        connected = await this.databaseService.checkConnection();
+        if (!connected) {
+          retries--;
+          if (retries > 0) {
+            console.log(`Database connection failed, retrying... (${retries} attempts left)`);
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
+          }
         }
       }
-    }
-    
-    if (!connected) {
-      throw new HttpException('Database connection is not available', HttpStatus.SERVICE_UNAVAILABLE);
-    }
-    
-    // Rest of your initialization code
-  } catch (error) {
-    // Log error details for debugging
-    console.error(`Error initializing agent for userId ${userId}:`, error);
-    
-    if (error instanceof HttpException) {
-      throw error;
-    }
-    
-    throw new HttpException(
-      `Cannot initialize chatbot: ${error.message || 'Unknown error'}`, 
-      HttpStatus.SERVICE_UNAVAILABLE
-    );
-  }
-      // if (this.agentCache.has(cacheKey)) {
-      //   this.agent = this.agentCache.get(cacheKey)!;
-      //   this.currentFileId = cacheKey;
-      //   console.log(`Using cached agent for userId: ${cacheKey}`);
-      //   return;
-      // }
 
-      // console.log(`Initializing new agent for userId: ${cacheKey}`);
-
-      // // Try to explicitly validate the database connection before creating the saver
-      // try {
-      //   // Check if the connection is working
-      //   const isDbConnected = await this.databaseService.checkConnection();
-      //   if (!isDbConnected) {
-      //     console.error('Database connection check failed before agent initialization');
-      //     throw new Error('Database connection is not available');
-      //   }
-
-      //   console.log('Database connection validated before creating PostgresSaver');
-      // } catch (dbError) {
-      //   console.error('Failed to validate database connection:', dbError);
-      //   throw new HttpException(
-      //     'Cannot initialize chatbot: Database connection failed',
-      //     HttpStatus.SERVICE_UNAVAILABLE
-      //   );
-      // }
-
-      // Define tools outside of the PostgresSaver creation
-      const retrieveSchema = z.object({ query: z.string() });
-      const retrieve = tool(
-        async ({ query }) => {
-          try {
-            // Check for multi-document summary requests FIRST (more specific pattern)
-            const isMultiDocumentSummaryQuery =
-              /summar(y|ize|ies)|overview|all( of)? (my |the )?documents?/i.test(query);
-
-            if (isMultiDocumentSummaryQuery) {
-              try {
-                console.log(`[RETRIEVE] Handling multi-document summary query`);
-                const userDocs = await this.docHubService.getUserDocuments(userId);
-
-                if (userDocs.length === 0) {
-                  return ['You have not uploaded any documents yet.', []];
-                }
-
-                // Process each document and get summaries
-                const documentSummaries = [];
-                let allResults: Document[] = [];
-
-                // Process up to 5 documents to avoid overwhelming responses
-                const docsToProcess = userDocs.slice(0, 5);
-
-                console.log(`[RETRIEVE] Processing ${docsToProcess.length} documents for summary`);
-
-                for (const doc of docsToProcess) {
-                  console.log(`[RETRIEVE] Getting summary for: ${doc.fileName}`);
-
-                  // For each document, get key chunks
-                  try {
-                    // Get 3 chunks per document - typically first, middle, and end provide good coverage
-                    const docResults = await this.docHubService.similaritySearch(
-                      'summary overview introduction conclusion',
-                      3,
-                      { user_id: userId, file_id: doc.fileId }
-                    );
-
-                    if (docResults.length > 0) {
-                      // Add document metadata to each result
-                      docResults.forEach((result) => {
-                        result.metadata.documentName = doc.fileName;
-                      });
-
-                      // Create document summary entry
-                      const docContent = docResults.map((chunk) => chunk.pageContent).join('\n\n');
-                      documentSummaries.push({
-                        fileName: doc.fileName,
-                        content: docContent,
-                      });
-
-                      allResults = [...allResults, ...docResults];
-                    } else {
-                      // If no results from similarity search, try direct retrieval
-                      const directChunks = await this.docHubService.getDocumentChunks(
-                        doc.fileId,
-                        userId,
-                        3
-                      );
-
-                      if (directChunks && directChunks.length > 0) {
-                        directChunks.forEach((result) => {
-                          result.metadata.documentName = doc.fileName;
-                        });
-
-                        const docContent = directChunks
-                          .map((chunk) => chunk.pageContent)
-                          .join('\n\n');
-                        documentSummaries.push({
-                          fileName: doc.fileName,
-                          content: docContent,
-                        });
-
-                        allResults = [...allResults, ...directChunks];
-                      } else {
-                        // If still no results, add a placeholder
-                        documentSummaries.push({
-                          fileName: doc.fileName,
-                          content:
-                            'This document appears to be empty or contains no extractable text content.',
-                        });
-                      }
-                    }
-                  } catch (docError) {
-                    console.error(
-                      `[RETRIEVE] Error processing document ${doc.fileName}:`,
-                      docError
-                    );
-                    documentSummaries.push({
-                      fileName: doc.fileName,
-                      content: 'Error retrieving content for this document.',
-                    });
-                  }
-                }
-
-                // Format the results into a user-friendly response
-                const formattedSummaries = documentSummaries
-                  .map((summary) => `## ${summary.fileName}\n\n${summary.content}`)
-                  .join('\n\n---\n\n');
-
-                const responseText = `Here are summaries from your documents:\n\n${formattedSummaries}`;
-
-                return [responseText, allResults];
-              } catch (error) {
-                console.error(`[RETRIEVE] Error handling multi-document summary:`, error);
-                return ['I encountered an error while trying to summarize your documents.', []];
-              }
-            }
-
-            // Check for different types of document queries SECOND (more general pattern)
-            const isGeneralDocumentQuery =
-              /what|list|tell|any|documents|files|uploaded|shared|have i/i.test(query);
-
-            if (isGeneralDocumentQuery) {
-              try {
-                console.log(`[RETRIEVE] Handling general document query`);
-                const userDocs = await this.docHubService.getUserDocuments(userId);
-                console.log(`[RETRIEVE] Found ${userDocs.length} documents for user ${userId}`);
-                console.log(
-                  `[RETRIEVE] Documents:`,
-                  userDocs.map((d) => d.fileName)
-                );
-
-                if (userDocs.length === 0) {
-                  return ['You have not uploaded any documents yet.', []];
-                }
-
-                // Format the document list with upload dates
-                const docList = userDocs
-                  .map((doc) => {
-                    const uploadDate = new Date(doc.createdAt).toLocaleDateString();
-                    return `- ${doc.fileName} (uploaded on ${uploadDate})`;
-                  })
-                  .join('\n');
-
-                const responseText =
-                  userDocs.length === 1
-                    ? `You have uploaded one document:\n${docList}\nYou can ask me about this document specifically.`
-                    : `You have uploaded the following documents:\n${docList}\nYou can ask me about any of these documents specifically.`;
-
-                return [responseText, []];
-              } catch (error) {
-                console.error(`[RETRIEVE] Error getting user documents:`, error);
-                return ['I was unable to retrieve your document list at this time.', []];
-              }
-            }
-
-            // 1. Get all the user's documents first
-            const userDocs = await this.docHubService.getUserDocuments(userId);
-            console.log(
-              `[RETRIEVE] Available documents:`,
-              userDocs.map((d) => d.fileName)
-            );
-
-            // 2. Check if the query specifically mentions any document names
-            const queryLower = query.toLowerCase();
-            const matchingDocs = [];
-
-            // First try exact filename matching
-            for (const doc of userDocs) {
-              const fileName = doc.fileName.toLowerCase();
-              if (queryLower.includes(fileName)) {
-                matchingDocs.push(doc);
-                console.log(`[RETRIEVE] Found exact document match: ${doc.fileName}`);
-              }
-            }
-
-            // If no exact matches, try looser matching (e.g., 'legal' matches 'legal.pdf')
-            if (matchingDocs.length === 0) {
-              // Check for keywords that might indicate document types
-              const documentTypeKeywords = {
-                legal: ['legal', 'law', 'contract', 'agreement'],
-                resume: ['resume', 'cv', 'curriculum vitae'],
-                entrepreneur: ['entrepreneur', 'business', 'guide'],
-              };
-
-              // Try matching document types first
-              for (const [docType, keywords] of Object.entries(documentTypeKeywords)) {
-                if (keywords.some((keyword) => queryLower.includes(keyword))) {
-                  // Find documents that might match this type
-                  const potentialMatches = userDocs.filter((doc) =>
-                    doc.fileName.toLowerCase().includes(docType)
-                  );
-
-                  if (potentialMatches.length > 0) {
-                    console.log(
-                      `[RETRIEVE] Found ${potentialMatches.length} potential matches for "${docType}" document type`
-                    );
-                    matchingDocs.push(...potentialMatches);
-                  }
-                }
-              }
-
-              // If still no matches, try filename parts
-              if (matchingDocs.length === 0) {
-                for (const doc of userDocs) {
-                  const fileNameWithoutExt = doc.fileName.toLowerCase().split('.')[0];
-                  if (queryLower.includes(fileNameWithoutExt)) {
-                    matchingDocs.push(doc);
-                    console.log(`[RETRIEVE] Found partial document match: ${doc.fileName}`);
-                  }
-                }
-              }
-            }
-
-            // 3. If specific documents are mentioned, search only within those documents
-            if (matchingDocs.length > 0) {
-              console.log(`[RETRIEVE] Found ${matchingDocs.length} documents mentioned in query:`);
-              matchingDocs.forEach((doc) => console.log(`- ${doc.fileName} (${doc.fileId})`));
-
-              // Search within each matching document and combine results
-              let allResults: Document[] = [];
-
-              for (const doc of matchingDocs) {
-                console.log(`[RETRIEVE] Searching within document: ${doc.fileName}`);
-
-                // Create a more targeted search query that's specific to the document content
-                // rather than just removing the document name
-
-                // First, extract what the user wants to know about the document
-                const documentQuery = query;
-                const docNameWithoutExt = doc.fileName.split('.')[0].toLowerCase();
-
-                // Extract what the user wants to know about the document
-                // Look for patterns like "tell me about X in the document" or "what does the document say about X"
-                const contentPatterns = [
-                  /(?:tell|show|give|what).*?(?:about|regarding|concerning)\s+(.+?)(?:\s+in|\s+of|\s+from|\s+within|\s+the|\s+this|\s*$)/i,
-                  /(?:what|how|who|when|where|why).*?(?:in|of|from|within|the|this)\s+.*?(?:about|regarding|concerning)\s+(.+?)(?:\s+in|\s+of|\s+from|\s+within|\s+the|\s+this|\s*$)/i,
-                  /(?:content|information|details|summary|overview|explanation)\s+(?:of|about|regarding|on|for)\s+(.+?)(?:\s+in|\s+of|\s+from|\s+within|\s+the|\s+this|\s*$)/i,
-                ];
-
-                let specificContent = '';
-                for (const pattern of contentPatterns) {
-                  const match = query.match(pattern);
-                  if (match && match[1]) {
-                    specificContent = match[1].trim();
-                    break;
-                  }
-                }
-
-                // If we found specific content focus, use it; otherwise use more general terms
-                const searchTerms =
-                  specificContent ||
-                  (queryLower.includes('overview')
-                    ? 'overview summary introduction conclusion'
-                    : queryLower.includes('content')
-                      ? 'content main_points key_sections'
-                      : 'main content summary key points');
-
-                const filterParams = {
-                  user_id: userId,
-                  file_id: doc.fileId,
-                };
-
-                // Check if this is an "overall contents" type query (very general)
-                if (
-                  (queryLower.includes('overall') && queryLower.includes('content')) ||
-                  (queryLower.includes('tell') &&
-                    queryLower.includes('about') &&
-                    !specificContent) ||
-                  (queryLower.includes('what') && queryLower.includes('in') && !specificContent) ||
-                  (queryLower.startsWith('summarize ') && !specificContent)
-                ) {
-                  console.log(
-                    `[RETRIEVE] Detected general content request for the entire document`
-                  );
-                  // For overall document requests, use broader search terms but maintain document context
-                  let docResults = [];
-                  docResults = await this.docHubService.getDocumentChunks(doc.fileId, userId, 5);
-
-                  console.log(
-                    `[RETRIEVE] Retrieved ${docResults.length} chunks directly for overall content request`
-                  );
-
-                  // If direct chunk retrieval didn't work, fall back to similarity search
-                  if (docResults.length === 0) {
-                    console.log(`[RETRIEVE] Falling back to similarity search for overall content`);
-                    docResults = await this.docHubService.similaritySearch(
-                      'introduction overview summary conclusion main points',
-                      5,
-                      filterParams
-                    );
-                  }
-
-                  // Add document name to each result's metadata for better context
-                  docResults.forEach((result) => {
-                    result.metadata.documentName = doc.fileName;
-                  });
-
-                  allResults = [...allResults, ...docResults];
-                } else {
-                  // Standard search process for specific content
-                  console.log(`[RETRIEVE] Using document-specific search terms: "${searchTerms}"`);
-
-                  // Try with similarity search first
-                  let docResults = [];
-                  docResults = await this.docHubService.similaritySearch(
-                    searchTerms,
-                    5, // Increase from 3 to 5 for better coverage
-                    filterParams
-                  );
-
-                  console.log(
-                    `[RETRIEVE] Found ${docResults.length} results for ${doc.fileName} with similarity search`
-                  );
-
-                  // If no results with similarity search, try retrieving chunks directly
-                  if (docResults.length === 0) {
-                    console.log(
-                      `[RETRIEVE] No results found with similarity search, trying direct document retrieval`
-                    );
-
-                    try {
-                      // Get the raw document content directly
-                      const rawDocResults = await this.docHubService.getDocumentChunks(
-                        doc.fileId,
-                        userId,
-                        5
-                      );
-
-                      if (rawDocResults && rawDocResults.length > 0) {
-                        console.log(
-                          `[RETRIEVE] Retrieved ${rawDocResults.length} chunks directly from document`
-                        );
-                        docResults = rawDocResults;
-                      } else {
-                        console.log(
-                          `[RETRIEVE] Document appears to have no content in the database!`
-                        );
-
-                        // Check if the document exists in the database at all
-                        const checkResult = await this.docHubService.checkDocumentExists(
-                          doc.fileId
-                        );
-                        console.log(`[RETRIEVE] Document exists check: ${checkResult}`);
-                      }
-                    } catch (error) {
-                      console.error(`[RETRIEVE] Error retrieving raw document chunks:`, error);
-                    }
-                  }
-
-                  // Add document name to each result's metadata for better context
-                  docResults.forEach((result) => {
-                    result.metadata.documentName = doc.fileName;
-                  });
-
-                  allResults = [...allResults, ...docResults];
-                }
-              }
-
-              if (allResults.length === 0) {
-                return [
-                  `I found a document called "${matchingDocs[0].fileName}", but I couldn't extract any content from it. This may happen if the document is empty, contains only images, or hasn't been properly processed.`,
-                  [],
-                ];
-              }
-
-              // Format the results with document names
-              const serialized = allResults
-                .map(
-                  (doc) =>
-                    `Source: ${doc.metadata.documentName || doc.metadata.source}\nContent: ${doc.pageContent}`
-                )
-                .join('\n\n---\n\n');
-
-              return [serialized, allResults];
-            }
-
-            // 4. Always include business context with every query
-            // First, extract business context from documents
-            console.log(`[RETRIEVE] Extracting business context from documents`);
-            let businessContext: Document[] = [];
-
-            // Try to find business description documents first (look for keywords in filenames)
-            const businessDocKeywords = [
-              'company',
-              'business',
-              'profile',
-              'overview',
-              'about',
-              'description',
-            ];
-            const potentialBusinessDocs = userDocs.filter((doc) =>
-              businessDocKeywords.some((keyword) => doc.fileName.toLowerCase().includes(keyword))
-            );
-
-            // If we found potential business context documents, search them first
-            if (potentialBusinessDocs.length > 0) {
-              console.log(
-                `[RETRIEVE] Found ${potentialBusinessDocs.length} potential business context documents`
-              );
-
-              for (const doc of potentialBusinessDocs) {
-                const contextResults = await this.docHubService.similaritySearch(
-                  'business overview description company profile',
-                  2,
-                  { user_id: userId, file_id: doc.fileId }
-                );
-
-                if (contextResults.length > 0) {
-                  businessContext = [...businessContext, ...contextResults];
-                }
-              }
-            }
-
-            // If we don't have specific business context yet, try a general search across all documents
-            if (businessContext.length === 0) {
-              console.log(`[RETRIEVE] Searching all documents for business context`);
-              businessContext = await this.docHubService.similaritySearch(
-                'business company description overview profile industry sector',
-                3,
-                { user_id: userId }
-              );
-            }
-
-            // 5. Now perform the main query search
-            console.log(`[RETRIEVE] Searching for query: "${query}"`);
-            let documentContext = null;
-            if (matchingDocs.length === 0) {
-              // Check if query mentions any document type keywords
-              const docTypeKeywords = {
-                legal: ['legal', 'law', 'contract', 'agreement', 'terms'],
-                resume: ['resume', 'cv', 'curriculum vitae'],
-                entrepreneur: ['entrepreneur', 'business guide', 'business plan'],
-              };
-
-              for (const [docType, keywords] of Object.entries(docTypeKeywords)) {
-                if (keywords.some((keyword) => queryLower.includes(keyword))) {
-                  // Find the first document that matches this type
-                  const match = userDocs.find((doc) =>
-                    doc.fileName.toLowerCase().includes(docType)
-                  );
-
-                  if (match) {
-                    console.log(
-                      `[RETRIEVE] Query contains "${docType}" keyword, focusing on document: ${match.fileName}`
-                    );
-                    documentContext = match;
-                    break;
-                  }
-                }
-              }
-            } else if (matchingDocs.length === 1) {
-              // If we had exactly one matching document but couldn't find anything in it,
-              // we should still search only within that document
-              documentContext = matchingDocs[0];
-              console.log(
-                `[RETRIEVE] Maintaining context to document: ${documentContext.fileName}`
-              );
-            }
-
-            // Check if this is a general content/overview query
-            const isOverallContentsQuery =
-              (queryLower.includes('overall') && queryLower.includes('content')) ||
-              (queryLower.includes('tell') &&
-                queryLower.includes('about') &&
-                queryLower.includes('document')) ||
-              (queryLower.includes('contents') &&
-                queryLower.includes('of') &&
-                queryLower.includes('document')) ||
-              (queryLower.includes('what') &&
-                queryLower.includes('in') &&
-                queryLower.includes('document'));
-
-            // If this is a general content query and we have a document context, use direct retrieval
-            if (isOverallContentsQuery && documentContext) {
-              console.log(
-                `[RETRIEVE] Detected overall contents query for document: ${documentContext.fileName}`
-              );
-
-              // Get chunks directly from the document
-              const documentChunks = await this.docHubService.getDocumentChunks(
-                documentContext.fileId,
-                userId,
-                5
-              );
-
-              console.log(
-                `[RETRIEVE] Retrieved ${documentChunks.length} chunks directly from document`
-              );
-
-              if (documentChunks.length > 0) {
-                // Add document name to results
-                documentChunks.forEach((chunk) => {
-                  chunk.metadata.documentName = documentContext.fileName;
-                });
-
-                // Format and return the results
-                const serialized = documentChunks
-                  .map(
-                    (doc) =>
-                      `Source: ${doc.metadata.documentName || doc.metadata.source}\nContent: ${doc.pageContent}`
-                  )
-                  .join('\n\n---\n\n');
-
-                return [serialized, documentChunks];
-              }
-              // If no chunks found, continue with regular search
-            }
-
-            // Apply the appropriate filters based on context
-            const filterParams = userId
-              ? documentContext
-                ? { user_id: userId, file_id: documentContext.fileId }
-                : { user_id: userId }
-              : {};
-
-            console.log(`[RETRIEVE] Applied filter parameters:`, filterParams);
-            const retrievedDocs = await this.docHubService.similaritySearch(query, 5, filterParams);
-
-            // 6. Combine the business context with the query results
-            let allResults = [...retrievedDocs];
-
-            // Only add business context if it's not already covered in the main query results
-            if (businessContext.length > 0) {
-              // Add a special marker to identify business context
-              businessContext.forEach((doc) => {
-                doc.metadata.isBusinessContext = true;
-                doc.metadata.contextType = 'business_profile';
-              });
-
-              // Check if we should add business context based on overlap
-              const shouldAddContext = !retrievedDocs.some((doc) =>
-                businessContext.some(
-                  (contextDoc) =>
-                    doc.pageContent.includes(contextDoc.pageContent) ||
-                    contextDoc.pageContent.includes(doc.pageContent)
-                )
-              );
-
-              if (shouldAddContext) {
-                console.log(`[RETRIEVE] Adding ${businessContext.length} business context items`);
-                allResults = [...businessContext, ...retrievedDocs];
-              }
-            }
-
-            if (allResults.length === 0) {
-              return [
-                "I couldn't find any relevant information in your documents for that query.",
-                [],
-              ];
-            }
-
-            // Add document names to results when possible
-            for (const doc of allResults) {
-              if (doc.metadata.file_id) {
-                const matchingDoc = userDocs.find(
-                  (userDoc) => userDoc.fileId === doc.metadata.file_id
-                );
-                if (matchingDoc) {
-                  doc.metadata.documentName = matchingDoc.fileName;
-                }
-              }
-            }
-
-            // Format the results, clearly marking business context
-            const serialized = allResults
-              .map((doc) => {
-                const sourcePrefix = doc.metadata.isBusinessContext
-                  ? 'Business Context from'
-                  : 'Source';
-                return `${sourcePrefix}: ${doc.metadata.documentName || doc.metadata.source}\nContent: ${doc.pageContent}`;
-              })
-              .join('\n\n---\n\n');
-
-            return [serialized, allResults];
-          } catch (error) {
-            console.error('Error in retrieve tool:', error);
-            return ['No matching documents found.', []];
-          }
-        },
-        {
-          name: 'retrieve',
-          description:
-            'Retrieve information related to a query from documents uploaded by the user, including relevant business context.',
-          schema: retrieveSchema,
-          responseFormat: 'content_and_artifact',
-        }
-      );
-
-      const searchSchema = z.object({ query: z.string() });
-      const searchTool = tool(
-        async ({ query }) => {
-          const url = 'https://api.perplexity.ai/chat/completions';
-          const token = process.env.PERPLEXITY_API_KEY;
-
-          const data = {
-            model: 'sonar-reasoning',
-            messages: [
-              {
-                role: 'system',
-                content: 'Be precise and concise.',
-              },
-              {
-                role: 'user',
-                content: query,
-              },
-            ],
-            max_tokens: null,
-            temperature: 0,
-            top_p: 0.1,
-            search_domain_filter: ['perplexity.ai'],
-            return_images: false,
-            return_related_questions: false,
-            search_recency_filter: 'week',
-            top_k: 0,
-            stream: false,
-            presence_penalty: 0,
-            frequency_penalty: 1,
-            response_format: null,
-          };
-          try {
-            const response = await axios.post(url, data, {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-            });
-            return response.data.choices[0].message.content;
-          } catch (error) {
-            console.error('Error fetching response:', error.response?.data || error.message);
-            return 'Unable to search for information at this time.';
-          }
-        },
-        {
-          name: 'search',
-          description: 'Search for updated in realtime information on the web related to a query.',
-          schema: searchSchema,
-          responseFormat: 'content',
-        }
-      );
+      if (!connected) {
+        throw new HttpException(
+          'Database connection is not available',
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+
+      // Rest of your initialization code
 
       // Use PostgresSQL connection string directly with saver - with better error handling
       let checkpointSaver;
@@ -818,9 +161,22 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
         );
       }
 
+      const documentListTool = new DocumentListTool(this.docHubService, userId);
+      const similaritySearchTool = new SimilaritySearchTool(this.docHubService);
+      const fileSelectorTool = new FileSelectorTool(this.docHubService);
+      const documentVectorsTool = new DocumentVectorsTool(this.docHubService, userId);
+
+      // Create a tools description string dynamically
+      const toolsDescription = `
+Available tools:
+- document_list: ${documentListTool.description}
+- file_selector: ${fileSelectorTool.description}
+- document_vectors: ${documentVectorsTool.description}
+`;
+
       this.agent = await createReactAgent({
         llm: this.llm,
-        tools: userId ? [retrieve, searchTool] : [searchTool],
+        tools: [documentListTool, fileSelectorTool.tool, documentVectorsTool.tool],
         checkpointSaver: checkpointSaver,
         stateModifier: async (state: typeof MessagesAnnotation.State): Promise<BaseMessage[]> => {
           return trimMessages(
@@ -849,6 +205,9 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 3. If the user wants to compare or analyze multiple documents, retrieve information from all relevant documents
                 4. Always cite document names when providing information from documents
                 5. If a document search returns no results, suggest the user try different keywords or upload relevant documents
+
+                You can use any of the following tools to help you answer the user's question:
+                ${toolsDescription}
 
                 Important boundaries:
                 - Do NOT provide advice on how to circumvent laws or engage in illegal activities
