@@ -33,7 +33,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       ssl: {
         rejectUnauthorized: false,
       },
-      max: 30,
+      max: 200,
       min: 5,
       idleTimeoutMillis: 60000, // 60 seconds
       connectionTimeoutMillis: 15000, // 15 seconds

@@ -112,39 +112,57 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     const cacheKey = userId || 'default';
 
     try {
-      // If agent for this userId is already cached and connections are alive, return it
       if (this.agentCache.has(cacheKey)) {
         this.agent = this.agentCache.get(cacheKey)!;
         this.currentFileId = cacheKey;
         console.log(`Using cached agent for userId: ${cacheKey}`);
         return;
       }
+      // If agent for this userId is already cached and connections are alive, return it
 
-      console.log(`Initializing new agent for userId: ${cacheKey}`);
+      try {
+        // Check database connection with retry logic
+        let connected = false;
+        let retries = 3;
 
-      // Check database connection with retry logic
-      let connected = false;
-      let retries = 3;
-
-      while (!connected && retries > 0) {
-        connected = await this.databaseService.checkConnection();
-        if (!connected) {
-          retries--;
-          if (retries > 0) {
-            console.log(`Database connection failed, retrying... (${retries} attempts left)`);
-            await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
+        while (!connected && retries > 0) {
+          connected = await this.databaseService.checkConnection();
+          if (!connected) {
+            retries--;
+            if (retries > 0) {
+              console.log(`Database connection failed, retrying... (${retries} attempts left)`);
+              await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
+            }
           }
         }
-      }
 
-      if (!connected) {
+        if (!connected && retries <= 0) {
+          throw new HttpException(
+            'Database connection is not available',
+            HttpStatus.SERVICE_UNAVAILABLE
+          );
+        }
+      } catch (error) {
+        // Log error details for debugging
+        console.error(`Error initializing agent for userId ${userId}:`, error);
+
+        if (error instanceof HttpException) {
+          throw error;
+        }
+
         throw new HttpException(
-          'Database connection is not available',
+          `Cannot initialize chatbot: ${error.message || 'Unknown error'}`,
           HttpStatus.SERVICE_UNAVAILABLE
         );
       }
 
       // Rest of your initialization code
+      // if (this.agentCache.has(cacheKey)) {
+      //   this.agent = this.agentCache.get(cacheKey)!;
+      //   this.currentFileId = cacheKey;
+      //   console.log(`Using cached agent for userId: ${cacheKey}`);
+      //   return;
+      // }
 
       // Use PostgresSQL connection string directly with saver - with better error handling
       let checkpointSaver;
@@ -168,11 +186,11 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
       // Create a tools description string dynamically
       const toolsDescription = `
-Available tools:
-- document_list: ${documentListTool.description}
-- file_selector: ${fileSelectorTool.description}
-- document_vectors: ${documentVectorsTool.description}
-`;
+                                Available tools:
+                                - document_list: ${documentListTool.description}
+                                - file_selector: ${fileSelectorTool.description}
+                                - document_vectors: ${documentVectorsTool.description}
+                                `;
 
       this.agent = await createReactAgent({
         llm: this.llm,

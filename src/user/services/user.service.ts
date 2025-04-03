@@ -54,7 +54,7 @@ export class UserService {
   }
 
   async getUser(userJwtPayload: UserJwtPayload) {
-    const user = await this.findById(userJwtPayload.id);
+    const user: any = await this.findById(userJwtPayload.id);
 
     if (!user) {
       throw new NotFoundException('User not found');
@@ -64,6 +64,7 @@ export class UserService {
     const hasCompletedSetup = userCompanies.some(
       (company) => company.hasCompletedSetup,
     );
+
 
     const userWithAdmin = {
       ...user,
@@ -112,16 +113,10 @@ export class UserService {
     });
 
     if (passwordTokens.length >= 3) {
-      throw new BadRequestException(
-        'Too many password reset requests, try again later',
-      );
+      throw new BadRequestException('Too many password reset requests, try again later');
     }
 
-    return this.userRepository.createResetPasswordToken(
-      email,
-      hashedToken,
-      expiresAt,
-    );
+    return this.userRepository.createResetPasswordToken(email, hashedToken, expiresAt);
   }
 
   async createVerificationToken(user: UserEntity) {
@@ -132,7 +127,7 @@ export class UserService {
     return this.userRepository.createVerificationToken(
       user.email,
       hashedToken,
-      new Date(Date.now() + 1000 * 60 * 60 * 24),
+      new Date(Date.now() + 1000 * 60 * 60 * 24)
     );
   }
 
