@@ -180,10 +180,21 @@ export class RegistrationService {
 
     await this.companiesService.setUpAfterPayment(companyId);
 
-    return this.companiesRepository.updateById(companyId, {
+    // Update company with step3 data
+    const updatedCompany = await this.companiesRepository.updateById(companyId, {
       ...step3Dto,
       hasCompletedSetup: true,
     });
+
+    const userCompany = await this.companiesRepository.getUserCompanyByCompanyId(companyId);
+    if (userCompany && userCompany.userId) {
+
+      await this.usersRepository.update(userCompany.userId, {
+        registered: true
+      });
+    }
+
+    return updatedCompany;
   }
 
   async getStep3(user: UserEntity, companyId: string): Promise<Step3Dto> {

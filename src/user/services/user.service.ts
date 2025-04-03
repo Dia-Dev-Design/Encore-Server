@@ -31,6 +31,8 @@ export class UserService {
       name: null,
       phoneNumber: null,
       isAdmin: false,
+      isActivated: false,
+      registered: false,
     });
   }
 
@@ -46,6 +48,8 @@ export class UserService {
       isVerified: true,
       phoneNumber: null,
       isAdmin: false,
+      isActivated: false,
+      registered: false,
     });
   }
 
@@ -61,10 +65,6 @@ export class UserService {
       (company) => company.hasCompletedSetup,
     );
 
-    // Add the isAdmin property to the user object
-    // This assumes you're either:
-    // 1. Getting this from a database field that wasn't included in your initial query
-    // 2. Setting a default value
     const userWithAdmin = {
       ...user,
       // isAdmin: user.isAdmin || false, // Use existing value or default to false
@@ -168,5 +168,13 @@ export class UserService {
     }
 
     return users;
+  }
+
+  async findNonActivatedUsers(page: number = 1, limit: number = 10) {
+    return this.userRepository.findNonActivatedUsers(page, limit);
+  }
+
+  async activateUser(userId: string) {
+    return this.update(userId, { isActivated: true });
   }
 }
