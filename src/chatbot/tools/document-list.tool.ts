@@ -26,8 +26,8 @@ export class DocumentListTool extends Tool {
         .join('\n');
 
       return userDocs.length === 1
-        ? `You have uploaded one document:\n${docList}\nYou can ask me about this document specifically.`
-        : `You have uploaded the following documents:\n${docList}\nYou can ask me about any of these documents specifically.`;
+        ? `You have uploaded one document:\n\n${docList}\n\nYou can ask me about this document specifically.`
+        : `You have uploaded the following documents:\n\n${docList}\n\nYou can ask me about any of these documents specifically.`;
     } catch (error) {
       console.error('Error in document list tool:', error);
       return 'Sorry, I encountered an error while retrieving your document list.';
