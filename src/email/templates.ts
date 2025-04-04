@@ -188,7 +188,6 @@ export function getLawyerChatRequestTemplate(
         <div style="padding: 30px; text-align: center;">
             <h1 style="font-size: 24px; color: #333333; margin-bottom: 20px;">Hello ${name || 'there'}!</h1>
             <p style="font-size: 16px; color: #666666; margin-bottom: 30px;">We've received your request to chat with a lawyer. Our legal team will review your request and respond as soon as possible.</p>
-         background-color: #007bff; text-decoration: none; border-radius: 4px;">View Chat Status</a>
             <p style="font-size: 16px; color: #666666; margin: 30px 0;">Our typical response time is within 24 hours during business days.</p>
             <p style="font-size: 16px; color: #666666;">Thank you for your patience</p>
         </div>

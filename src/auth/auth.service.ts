@@ -17,6 +17,7 @@ import { Request, Response } from 'express';
 import { Config } from 'src/config/config';
 import { UserEntity } from 'src/user/entities/user.entity';
 import { StaffUserService } from 'src/user/services/staff-service-user.service';
+import { CreateStaffUserDto } from './dto/create-staff-user.dto';
 
 @Injectable()
 export class AuthService {
@@ -208,5 +209,32 @@ export class AuthService {
 
     console.log('This is staffuser responsexxxxxxxxx>>>>', response);
     return response;
+  }
+
+  async staffSignUp(createStaffUserDto: CreateStaffUserDto) {
+    const existingStaff = await this.staffUserService.findByEmail(createStaffUserDto.email);
+    if (existingStaff) {
+      throw new BadRequestException('Staff user with this email already exists');
+    }
+
+    const newStaffUser = await this.staffUserService.create({
+      name: createStaffUserDto.name,
+      email: createStaffUserDto.email,
+      password: createStaffUserDto.password,
+    });
+
+    if (createStaffUserDto.isLawyer) {
+      await this.staffUserService.setLawyerStatus(newStaffUser.id, true);
+    }
+
+    return {
+      accessToken: this.jwtService.sign({
+        userId: newStaffUser.id,
+        email: newStaffUser.email,
+        isAdmin: true,
+      }),
+      user: newStaffUser,
+      isAdmin: true,
+    };
   }
 }
