@@ -180,7 +180,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       }
 
       const documentListTool = new DocumentListTool(this.docHubService, userId);
-      const similaritySearchTool = new SimilaritySearchTool(this.docHubService);
+      const similaritySearchTool = new SimilaritySearchTool(this.docHubService, userId);
       const fileSelectorTool = new FileSelectorTool(this.docHubService);
       const documentVectorsTool = new DocumentVectorsTool(this.docHubService, userId);
 
@@ -188,13 +188,14 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       const toolsDescription = `
                                 Available tools:
                                 - document_list: ${documentListTool.description}
+                                - similarity_search: ${similaritySearchTool.description}
                                 - file_selector: ${fileSelectorTool.description}
                                 - document_vectors: ${documentVectorsTool.description}
                                 `;
 
       this.agent = await createReactAgent({
         llm: this.llm,
-        tools: [documentListTool, fileSelectorTool.tool, documentVectorsTool.tool],
+        tools: [documentListTool, similaritySearchTool.tool, fileSelectorTool.tool, documentVectorsTool.tool],
         checkpointSaver: checkpointSaver,
         stateModifier: async (state: typeof MessagesAnnotation.State): Promise<BaseMessage[]> => {
           return trimMessages(
@@ -216,6 +217,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 4. For questions requiring current information or recent legal developments, use the **search tool**
                 5. Clearly indicate when information might vary by jurisdiction
                 6. Include appropriate disclaimers when the legal situation is complex or ambiguous
+                7. Use the **similarity_search** tool to enrich your responses with relevant context from the user's documents
 
                 When handling document-related inquiries:
                 1. If the user asks generally about what documents they have shared or uploaded, provide a list of their documents
@@ -223,6 +225,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 3. If the user wants to compare or analyze multiple documents, retrieve information from all relevant documents
                 4. Always cite document names when providing information from documents
                 5. If a document search returns no results, suggest the user try different keywords or upload relevant documents
+                6. Use the **similarity_search** tool to find relevant content across all documents when answering questions
 
                 You can use any of the following tools to help you answer the user's question:
                 ${toolsDescription}

@@ -5,33 +5,29 @@ import { Document } from '@langchain/core/documents';
 
 export class SimilaritySearchTool {
   private docHubService: DocHubService;
+  private userId: string;
   public readonly tool: ReturnType<typeof tool>;
   public readonly description: string;
 
-  constructor(docHubService: DocHubService) {
+  constructor(docHubService: DocHubService, userId: string) {
     this.docHubService = docHubService;
-    this.description = 'Search for similar content across user documents using semantic similarity. Can search across all documents or within a specific document if fileId is provided.';
+    this.userId = userId;
+    this.description = 'Search for similar content across user documents using semantic similarity.';
     
     const searchSchema = z.object({
       query: z.string().describe('The search query to find similar content'),
-      userId: z.string().describe('The ID of the user whose documents to search'),
-      fileId: z.string().optional().describe('Optional: Specific file ID to search within'),
       k: z.number().optional().describe('Optional: Number of results to return (default: 5)'),
     });
 
     this.tool = tool(
-      async ({ query, userId, fileId, k = 2 }) => {
+      async ({ query, k = 5 }) => {
         try {
-          console.log(`[SIMILARITY_SEARCH] Starting search for query: "${query}"`);
+          console.log(`[SIMILARITY_SEARCH] Starting search for query: "${query}" for user: ${this.userId}`);
           
           // Prepare filter parameters
           const filterParams: Record<string, any> = {
-            user_id: userId,
+            user_id: this.userId,
           };
-          
-          if (fileId) {
-            filterParams.file_id = fileId;
-          }
 
           // Perform similarity search
           const results = await this.docHubService.similaritySearch(query, k, filterParams);
