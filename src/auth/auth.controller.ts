@@ -41,6 +41,7 @@ import { StaffAuth } from './decorators/staff-auth.decorator';
 import { Request, Response } from 'express';
 import { UserService } from '../user/services/user.service';
 import { JwtService } from '@nestjs/jwt';
+import { CreateStaffUserDto } from './dto/create-staff-user.dto';
 
 @Controller('auth')
 export class AuthController {
@@ -283,5 +284,22 @@ export class AuthController {
       }
       throw error;
     }
+  }
+
+  @Post('admin/signup')
+  @Public()
+  @ApiOperation({
+    summary: 'Staff registration',
+    description: 'Create a new staff user account and return authentication token',
+  })
+  @ApiCreatedResponse({
+    description: 'Staff account created successfully. Returns JWT access token and user information',
+  })
+  @ApiBadRequestResponse({
+    description: 'Email already registered or invalid input data provided',
+  })
+  @ApiBody({ type: CreateStaffUserDto })
+  async staffSignup(@Body() createStaffUserDto: CreateStaffUserDto) {
+    return this.authService.staffSignUp(createStaffUserDto);
   }
 }
