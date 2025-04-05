@@ -1,6 +1,6 @@
 import { ApiProperty, IntersectionType } from '@nestjs/swagger';
 import { PaginationParams } from '../../types/pagination';
-import { IsEnum, IsOptional } from 'class-validator';
+import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { notificationCategoryEnum } from '../enum/notifications.enum';
 
 export class NotificationsFilterParamsDto extends IntersectionType(
@@ -13,4 +13,12 @@ export class NotificationsFilterParamsDto extends IntersectionType(
   @IsOptional()
   @IsEnum(notificationCategoryEnum)
   category?: notificationCategoryEnum;
+  
+  @ApiProperty({
+    description: 'User ID',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  userId?: string;
 }
