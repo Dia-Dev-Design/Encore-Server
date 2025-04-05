@@ -14,12 +14,11 @@ export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getStaffNotifications(
-    payload: NotificationsFilterParamsDto,
-    staffUserId: string,
+    payload: NotificationsFilterParamsDto
   ) {
     const { page, limit } = payload;
 
-    let filter: Prisma.NotificationsStaffWhereInput = { staffId: staffUserId };
+    let filter: Prisma.NotificationsStaffWhereInput = { staffId: payload.userId };
     if (payload.category) {
       filter = {
         ...filter,

@@ -15,9 +15,9 @@ export class NotificationsController {
     @Request() req,
     @Query() payload: NotificationsFilterParamsDto,
   ) {
+    console.log(req);
     return await this.notificationsService.getStaffNotifications(
-      payload,
-      req?.user?.id,
+      payload
     );
   }
 
