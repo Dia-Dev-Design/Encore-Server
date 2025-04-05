@@ -36,4 +36,8 @@ export class StaffUserService {
       lastPasswordChange: new Date(),
     });
   }
+
+  async setLawyerStatus(id: string, isLawyer: boolean): Promise<StaffUser> {
+    return this.staffUserRepository.update(id, { isLawyer });
+  }
 }

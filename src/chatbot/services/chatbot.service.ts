@@ -180,7 +180,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       }
 
       const documentListTool = new DocumentListTool(this.docHubService, userId);
-      const similaritySearchTool = new SimilaritySearchTool(this.docHubService);
+      const similaritySearchTool = new SimilaritySearchTool(this.docHubService, userId);
       const fileSelectorTool = new FileSelectorTool(this.docHubService);
       const documentVectorsTool = new DocumentVectorsTool(this.docHubService, userId);
 
@@ -188,13 +188,14 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       const toolsDescription = `
                                 Available tools:
                                 - document_list: ${documentListTool.description}
+                                - similarity_search: ${similaritySearchTool.description}
                                 - file_selector: ${fileSelectorTool.description}
                                 - document_vectors: ${documentVectorsTool.description}
                                 `;
 
       this.agent = await createReactAgent({
         llm: this.llm,
-        tools: [documentListTool, fileSelectorTool.tool, documentVectorsTool.tool],
+        tools: [documentListTool, similaritySearchTool.tool, fileSelectorTool.tool, documentVectorsTool.tool],
         checkpointSaver: checkpointSaver,
         stateModifier: async (state: typeof MessagesAnnotation.State): Promise<BaseMessage[]> => {
           return trimMessages(
@@ -216,6 +217,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 4. For questions requiring current information or recent legal developments, use the **search tool**
                 5. Clearly indicate when information might vary by jurisdiction
                 6. Include appropriate disclaimers when the legal situation is complex or ambiguous
+                7. Use the **similarity_search** tool to enrich your responses with relevant context from the user's documents
 
                 When handling document-related inquiries:
                 1. If the user asks generally about what documents they have shared or uploaded, provide a list of their documents
@@ -223,6 +225,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 3. If the user wants to compare or analyze multiple documents, retrieve information from all relevant documents
                 4. Always cite document names when providing information from documents
                 5. If a document search returns no results, suggest the user try different keywords or upload relevant documents
+                6. Use the **similarity_search** tool to find relevant content across all documents when answering questions
 
                 You can use any of the following tools to help you answer the user's question:
                 ${toolsDescription}
@@ -731,26 +734,65 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  async createThread(userId: string) {
+  async createThread(userId: string, title?: string) {
     try {
       // First, make sure userId is not undefined or empty
       if (!userId) {
         throw new BadRequestException('User ID is required to create a chat thread');
       }
-
-      console.log('Creating thread for user ID:', userId); // Add debugging
-
-      const thread = await this.prisma.chatThread.create({
-        data: {
-          User: {
-            connect: {
-              id: userId,
-            },
-          },
+  
+      const userCompany = await this.prisma.userCompany.findFirst({
+        where: {
+          userId,
+        },
+        include: {
+          Company: true,
         },
       });
+  
+      if (!userCompany) {
+        throw new NotFoundException(`No company found for user ID ${userId}`);
+      }
+  
+      console.log("This is the userCompany++++>", userCompany.Company);
+  
+      const companyId = userCompany.Company.id;
+    
+      console.log('Creating thread for user ID:', userId, 'companyId:', companyId);
+    
+      // Prepare the thread data
+      const threadData: any = {
+        userId: userId // Direct assignment instead of connect
+      };
+  
+      // If we have a title, add it
+      if (title) {
+        threadData.title = title;
+      }
+    
+      // Find or create the ChatCompany
+      let chatCompany = await this.prisma.chatCompany.findUnique({
+        where: { companyId },
+      });
+  
+      if (!chatCompany) {
+        console.log(`No ChatCompany found for company ID ${companyId}, creating one`);
+        // Create a ChatCompany if it doesn't exist
+        chatCompany = await this.prisma.chatCompany.create({
+          data: {
+            companyId,
+            lawyerReqStatus: 'PENDING', // Adjust based on your schema
+          },
+        });
+      }
+      // IMPORTANT: Set the chatCompanyId directly
+      threadData.chatCompanyId = chatCompany.id;  
+      // Create the thread with all necessary data
+      const thread = await this.prisma.chatThread.create({
+        data: threadData,
+      });
+    
 
-      console.log('Thread created:', thread); // Add debugging
       return thread;
     } catch (error) {
       // Handle error appropriately
@@ -1138,44 +1180,119 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  async getAllThreadsForAdmin(companyId: string, userId: string) {
-    try {
-      const threads = await this.prisma.chatThread.findMany({
-        where: { ChatCompany: { Company: { id: companyId } } },
-        orderBy: { createdAt: 'desc' },
-      });
+  async getAllThreadsForAdmin(companyId: string, adminId: string) {
 
+    const threads = await this.prisma.chatThread.findMany({
+      where: { chatCompanyId: companyId },
+    });
+    try {
+
+      console.log(`Company ID: ${companyId}, Admin ID: ${adminId}`);
+      
+      // First check if the admin exists
+      const adminExists = await this.prisma.staffUser.findUnique({
+        where: { id: adminId }
+      });
+      console.log(`Admin exists: ${!!adminExists}`);
+      
+      // Check if company exists
+      const companyExists = await this.prisma.company.findUnique({
+        where: { id: companyId }
+      });
+      console.log(`Company exists: ${!!companyExists}`);
+      
+      // Check all ChatCompany records to debug
+      const allChatCompanies = await this.prisma.chatCompany.findMany();
+      console.log(`Total ChatCompany records: ${allChatCompanies.length}`);
+      console.log("All ChatCompany companyIds:", allChatCompanies.map(cc => cc.companyId));
+      
+      // Check if this specific ChatCompany exists
+      const chatCompany = await this.prisma.chatCompany.findUnique({
+        where: { companyId: companyId }
+      });
+      console.log(`ChatCompany for this company exists: ${!!chatCompany}`);
+      
+      if (!chatCompany) {
+        console.log("No ChatCompany found, returning empty array");
+        return [];
+      }
+      
+      // Check all ChatThread records to debug
+      const allChatThreads = await this.prisma.chatThread.count();
+      console.log(`Total ChatThread records in database: ${allChatThreads}`);
+      
+      // Check threads that match our specific ChatCompany
+      const filteredThreads = await this.prisma.chatThread.findMany({
+        where: { chatCompanyId: chatCompany.id }
+      });
+      console.log(`Found ${filteredThreads.length} threads for chatCompanyId: ${chatCompany.id}`);
+      
+      if (filteredThreads.length === 0) {
+        // Verify the structure of a ChatThread to ensure fields match
+        const sampleThread = await this.prisma.chatThread.findFirst();
+        if (sampleThread) {
+          console.log("Sample thread structure:", Object.keys(sampleThread));
+          console.log("Sample thread chatCompanyId:", sampleThread.chatCompanyId);
+        }
+        
+        // Try a raw query to bypass Prisma
+        try {
+          const rawResults = await this.prisma.$queryRaw`
+            SELECT t.id, t."chatCompanyId", c."companyId"
+            FROM "ChatThread" t
+            LEFT JOIN "ChatCompany" c ON t."chatCompanyId" = c.id
+            WHERE c."companyId" = ${companyId}
+          `;
+          console.log("Raw SQL results:", rawResults);
+        } catch (sqlError) {
+          console.error("SQL query error:", sqlError);
+        }
+        
+        return [];
+      }
+      
+      // Continue with the original thread processing
       const listThreads = [];
-      for (const thread of threads) {
+      for (const thread of filteredThreads) {
         let isLawyer = false;
         let canWrite = false;
-        if (thread.chatType === ChatTypeEnum.CHAT_LAWYER) {
+        
+        console.log(`Processing thread ID: ${thread.id}, chatType: ${thread.chatType}`);
+        
+        if (thread.chatType === 'CHAT_LAWYER') {
           const chatLawyer = await this.prisma.chatLawyer.findFirst({
             where: {
               ChatThreadId: thread.id,
-              status: ChatLawyerStatus.ACTIVE,
-              lawyerId: userId,
+              status: 'ACTIVE',
+              lawyerId: adminId,
             },
           });
+          
           if (chatLawyer) {
             isLawyer = true;
             canWrite = true;
           }
+          
+          console.log(`Thread ${thread.id} lawyer status: isLawyer=${isLawyer}, canWrite=${canWrite}`);
         }
-
+  
         listThreads.push({
           ...thread,
           isLawyer,
           canWrite,
         });
       }
-
+  
+      console.log(`Final processed threads: ${listThreads.length}`);
       return listThreads;
+      
     } catch (error) {
-      console.error('Error retrieving all threads :', error);
-
+      console.error('Error retrieving all threads:', error);
+      // Log the full error stack
+      console.error('Stack trace:', error.stack);
+      
       throw new HttpException(
-        `Error retrieving all threads : ${error.message}`,
+        `Error retrieving all threads: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
