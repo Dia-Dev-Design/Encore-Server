@@ -2,12 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { MailDataRequired } from '@sendgrid/mail';
 import { SendGridClient } from './sendgrid-client';
 import { ConfigService } from '@nestjs/config';
-import { 
-  getResetPasswordTemplate, 
-  getVerifyEmailTemplate, 
-  getLawyerChatRequestTemplate, 
+import {
+  getResetPasswordTemplate,
+  getVerifyEmailTemplate,
+  getLawyerChatRequestTemplate,
   getLawyerResponseNotificationTemplate,
-  getLawyerNotificationTemplate
+  getLawyerNotificationTemplate,
+  getBugReportTemplate
 } from './templates';
 
 @Injectable()
@@ -15,7 +16,7 @@ export class EmailService {
   constructor(
     private readonly sendGridClient: SendGridClient,
     private readonly configService: ConfigService,
-  ) {}
+  ) { }
 
   async sendTestEmail(
     recipient: string,
@@ -90,4 +91,20 @@ export class EmailService {
       html: getLawyerNotificationTemplate(userName, companyName, threadId),
     });
   }
+
+  async sendBugReportEmail(
+    name: string,
+    userEmail: string,
+    subject: string,
+    message: string,
+  ): Promise<void> {
+    const supportEmail = process.env.SUPPORT_EMAIL
+
+    await this.sendGridClient.send({
+      to: supportEmail,
+      subject: `New Bug Report`,
+      html: getBugReportTemplate(name, userEmail, subject, message),
+    });
+  }
+
 }
