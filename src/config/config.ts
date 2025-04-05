@@ -1,3 +1,4 @@
+
 export interface Config {
   port: number;
   frontendUrl: string;
@@ -75,7 +76,9 @@ export default (): Config => ({
     redirectUrl: process.env.GOOGLE_REDIRECT_URL,
   },
   langchain: {
+
     openAiApiKey: process.env.OPENAI_API_KEY,
+
     chatModel: process.env.LANGCHAIN_CHAT_MODEL,
   },
   s3: {

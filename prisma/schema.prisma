@@ -452,6 +452,7 @@ model ChatLawyerMessage {
   userId          String?
   ChatThreadId    String
   fileId          String?
+  forLawyer       Boolean?
   ChatThread      ChatThread     @relation(fields: [ChatThreadId], references: [id])
   FileReference   FileReference? @relation(fields: [fileId], references: [id])
   StaffUser       StaffUser?     @relation(fields: [lawyerId], references: [id])

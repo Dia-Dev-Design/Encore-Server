@@ -1,3 +1,4 @@
+
 import {
   HttpException,
   HttpStatus,
@@ -77,7 +78,9 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     const config = {
       model: process.env.LANGCHAIN_CHAT_MODEL || 'gpt-3.5-turbo',
       temperature: 0,
+
       apiKey: process.env.OPENAI_API_KEY,
+
       embeddingModel: 'text-embedding-3-small',
       chunkSize: 1000,
       chunkOverlap: 200,
@@ -430,6 +433,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
             chatType: thread.chatType,
             files: [],
             messages: [],
+            forLawyer: thread.chatType === 'CHAT_LAWYER'
           };
         }
 
@@ -446,12 +450,14 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                   id: msg.id,
                   role: 'user',
                   content: msg.content,
+                  forLawyer: thread.chatType === 'CHAT_LAWYER'
                 };
               } else {
                 return {
                   id: msg.id,
                   role: 'ai',
                   content: msg.content,
+                  forLawyer: false
                 };
               }
             }) || [];
@@ -564,6 +570,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                   content: message.kwargs.content,
                   role: 'ai',
                   checkpoint_id: checkpointId,
+                  forLawyer: false
                 }));
               }
             } else {
@@ -579,6 +586,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                   content: message.content,
                   role: 'user',
                   checkpoint_id: checkpointId,
+                  forLaweyer: thread.chatType === 'CHAT_LAWYER'
                 }));
               }
             }
