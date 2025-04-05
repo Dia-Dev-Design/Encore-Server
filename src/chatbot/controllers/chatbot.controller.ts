@@ -407,6 +407,7 @@ export class ChatbotController {
         req?.user?.id,
         thread_id,
       );
+      console.log("This is the history on the thread+++++>", response)
       return { response };
     } catch (error) {
       throw new HttpException(
