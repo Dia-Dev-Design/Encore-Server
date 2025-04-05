@@ -734,26 +734,65 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  async createThread(userId: string) {
+  async createThread(userId: string, title?: string) {
     try {
       // First, make sure userId is not undefined or empty
       if (!userId) {
         throw new BadRequestException('User ID is required to create a chat thread');
       }
-
-      console.log('Creating thread for user ID:', userId); // Add debugging
-
-      const thread = await this.prisma.chatThread.create({
-        data: {
-          User: {
-            connect: {
-              id: userId,
-            },
-          },
+  
+      const userCompany = await this.prisma.userCompany.findFirst({
+        where: {
+          userId,
+        },
+        include: {
+          Company: true,
         },
       });
+  
+      if (!userCompany) {
+        throw new NotFoundException(`No company found for user ID ${userId}`);
+      }
+  
+      console.log("This is the userCompany++++>", userCompany.Company);
+  
+      const companyId = userCompany.Company.id;
+    
+      console.log('Creating thread for user ID:', userId, 'companyId:', companyId);
+    
+      // Prepare the thread data
+      const threadData: any = {
+        userId: userId // Direct assignment instead of connect
+      };
+  
+      // If we have a title, add it
+      if (title) {
+        threadData.title = title;
+      }
+    
+      // Find or create the ChatCompany
+      let chatCompany = await this.prisma.chatCompany.findUnique({
+        where: { companyId },
+      });
+  
+      if (!chatCompany) {
+        console.log(`No ChatCompany found for company ID ${companyId}, creating one`);
+        // Create a ChatCompany if it doesn't exist
+        chatCompany = await this.prisma.chatCompany.create({
+          data: {
+            companyId,
+            lawyerReqStatus: 'PENDING', // Adjust based on your schema
+          },
+        });
+      }
+      // IMPORTANT: Set the chatCompanyId directly
+      threadData.chatCompanyId = chatCompany.id;  
+      // Create the thread with all necessary data
+      const thread = await this.prisma.chatThread.create({
+        data: threadData,
+      });
+    
 
-      console.log('Thread created:', thread); // Add debugging
       return thread;
     } catch (error) {
       // Handle error appropriately
@@ -1141,44 +1180,119 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  async getAllThreadsForAdmin(companyId: string, userId: string) {
-    try {
-      const threads = await this.prisma.chatThread.findMany({
-        where: { ChatCompany: { Company: { id: companyId } } },
-        orderBy: { createdAt: 'desc' },
-      });
+  async getAllThreadsForAdmin(companyId: string, adminId: string) {
 
+    const threads = await this.prisma.chatThread.findMany({
+      where: { chatCompanyId: companyId },
+    });
+    try {
+
+      console.log(`Company ID: ${companyId}, Admin ID: ${adminId}`);
+      
+      // First check if the admin exists
+      const adminExists = await this.prisma.staffUser.findUnique({
+        where: { id: adminId }
+      });
+      console.log(`Admin exists: ${!!adminExists}`);
+      
+      // Check if company exists
+      const companyExists = await this.prisma.company.findUnique({
+        where: { id: companyId }
+      });
+      console.log(`Company exists: ${!!companyExists}`);
+      
+      // Check all ChatCompany records to debug
+      const allChatCompanies = await this.prisma.chatCompany.findMany();
+      console.log(`Total ChatCompany records: ${allChatCompanies.length}`);
+      console.log("All ChatCompany companyIds:", allChatCompanies.map(cc => cc.companyId));
+      
+      // Check if this specific ChatCompany exists
+      const chatCompany = await this.prisma.chatCompany.findUnique({
+        where: { companyId: companyId }
+      });
+      console.log(`ChatCompany for this company exists: ${!!chatCompany}`);
+      
+      if (!chatCompany) {
+        console.log("No ChatCompany found, returning empty array");
+        return [];
+      }
+      
+      // Check all ChatThread records to debug
+      const allChatThreads = await this.prisma.chatThread.count();
+      console.log(`Total ChatThread records in database: ${allChatThreads}`);
+      
+      // Check threads that match our specific ChatCompany
+      const filteredThreads = await this.prisma.chatThread.findMany({
+        where: { chatCompanyId: chatCompany.id }
+      });
+      console.log(`Found ${filteredThreads.length} threads for chatCompanyId: ${chatCompany.id}`);
+      
+      if (filteredThreads.length === 0) {
+        // Verify the structure of a ChatThread to ensure fields match
+        const sampleThread = await this.prisma.chatThread.findFirst();
+        if (sampleThread) {
+          console.log("Sample thread structure:", Object.keys(sampleThread));
+          console.log("Sample thread chatCompanyId:", sampleThread.chatCompanyId);
+        }
+        
+        // Try a raw query to bypass Prisma
+        try {
+          const rawResults = await this.prisma.$queryRaw`
+            SELECT t.id, t."chatCompanyId", c."companyId"
+            FROM "ChatThread" t
+            LEFT JOIN "ChatCompany" c ON t."chatCompanyId" = c.id
+            WHERE c."companyId" = ${companyId}
+          `;
+          console.log("Raw SQL results:", rawResults);
+        } catch (sqlError) {
+          console.error("SQL query error:", sqlError);
+        }
+        
+        return [];
+      }
+      
+      // Continue with the original thread processing
       const listThreads = [];
-      for (const thread of threads) {
+      for (const thread of filteredThreads) {
         let isLawyer = false;
         let canWrite = false;
-        if (thread.chatType === ChatTypeEnum.CHAT_LAWYER) {
+        
+        console.log(`Processing thread ID: ${thread.id}, chatType: ${thread.chatType}`);
+        
+        if (thread.chatType === 'CHAT_LAWYER') {
           const chatLawyer = await this.prisma.chatLawyer.findFirst({
             where: {
               ChatThreadId: thread.id,
-              status: ChatLawyerStatus.ACTIVE,
-              lawyerId: userId,
+              status: 'ACTIVE',
+              lawyerId: adminId,
             },
           });
+          
           if (chatLawyer) {
             isLawyer = true;
             canWrite = true;
           }
+          
+          console.log(`Thread ${thread.id} lawyer status: isLawyer=${isLawyer}, canWrite=${canWrite}`);
         }
-
+  
         listThreads.push({
           ...thread,
           isLawyer,
           canWrite,
         });
       }
-
+  
+      console.log(`Final processed threads: ${listThreads.length}`);
       return listThreads;
+      
     } catch (error) {
-      console.error('Error retrieving all threads :', error);
-
+      console.error('Error retrieving all threads:', error);
+      // Log the full error stack
+      console.error('Stack trace:', error.stack);
+      
       throw new HttpException(
-        `Error retrieving all threads : ${error.message}`,
+        `Error retrieving all threads: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }

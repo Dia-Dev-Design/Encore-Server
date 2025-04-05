@@ -514,7 +514,7 @@ export class ChatbotController {
     );
   }
   //admin
-  @Get('admin/threads/all/:companyId')
+  @Get('admin/threads/all/:companyId/:adminId')
   @ApiBearerAuth()
   @StaffAuth()
   @ApiResponse({
@@ -525,8 +525,9 @@ export class ChatbotController {
   async getThreadsForAdmin(
     @Request() req,
     @Param('companyId') companyId: string,
+    @Param('adminId') adminId: string
   ) {
-    return this.chatbotService.getAllThreadsForAdmin(companyId, req?.user?.id);
+    return this.chatbotService.getAllThreadsForAdmin(companyId, adminId);
   }
 
   //e18b7cf1-de30-4426-a6d3-278a36014350
