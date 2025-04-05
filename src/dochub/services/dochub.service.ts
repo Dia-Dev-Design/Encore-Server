@@ -1,3 +1,4 @@
+
 import {
   HttpException,
   HttpStatus,
@@ -35,7 +36,10 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
 
     const config = {
       embeddingModel: 'text-embedding-3-small',
+
+
       apiKey: process.env.OPENAI_API_KEY,
+
       chunkSize: 1000,
       chunkOverlap: 200,
     };
