@@ -1,4 +1,3 @@
-
 import {
   HttpException,
   HttpStatus,
@@ -398,8 +397,20 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
           user: {
             select: {
               id: true,
-              name: true,
               email: true,
+              UserCompany: {
+                include: {
+                  Company: {
+                    select: {
+                      name: true
+                    }
+                  }
+                },
+                where: {
+                  role: 'OWNER'
+                },
+                take: 1
+              }
             },
           },
         },
@@ -407,7 +418,7 @@ export class DocHubService implements OnModuleInit, OnModuleDestroy {
 
       return lawyerUsers.map((lu) => ({
         userId: lu.userId,
-        name: lu.user.name,
+        name: lu.user.UserCompany[0]?.Company?.name || 'No Company',
         email: lu.user.email,
       }));
     } catch (error) {

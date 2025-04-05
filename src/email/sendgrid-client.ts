@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import sendgrid from '@sendgrid/mail';
 
@@ -24,7 +24,22 @@ export class SendGridClient {
       );
     } catch (error) {
       this.logger.error('[SendGrid] Error while sending email', error);
-      throw error;
+      
+
+      if (error.response && error.response.body && error.response.body.errors) {
+
+        const maxCreditsExceeded = error.response.body.errors.some(
+          (err) => err.message === 'Maximum credits exceeded'
+        );
+        
+        if (maxCreditsExceeded) {
+          this.logger.warn('[SendGrid] Maximum credits exceeded. Email not sent.');
+          throw new ServiceUnavailableException('Email service temporarily unavailable: Maximum credits exceeded');
+        }
+      }
+      
+      // For all other errors, throw a more general exception
+      throw new ServiceUnavailableException('Failed to send email: ' + (error.message || 'Unknown error'));
     }
   }
 }
