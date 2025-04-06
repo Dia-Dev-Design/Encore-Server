@@ -1,8 +1,8 @@
 export function getVerifyEmailTemplate(
-  actionUrl: string,
-  name?: string,
+    actionUrl: string,
+    name?: string,
 ): string {
-  return `
+    return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -37,10 +37,10 @@ export function getVerifyEmailTemplate(
 }
 
 export function getResetPasswordTemplate(
-  actionUrl: string,
-  name?: string,
+    actionUrl: string,
+    name?: string,
 ): string {
-  return `
+    return `
   <!DOCTYPE html>
   <html lang="en">
   <head>
@@ -75,7 +75,7 @@ export function getResetPasswordTemplate(
 }
 
 export function footer(): string {
-  return `
+    return `
     <div class="footer">
             <p>7293 NW 2nd Ave, Miami, FL 33150</p>
             <p>You are receiving this email as you signed up at our website <a href="https://www.encoreai.com">www.encoreai.com</a>. <a href="#">Unsubscribe</a></p>
@@ -89,7 +89,7 @@ export function footer(): string {
 }
 
 export function style(): string {
-  return `
+    return `
         <style>
         body {
             font-family: Arial, sans-serif;
@@ -170,9 +170,9 @@ export function style(): string {
 }
 
 export function getLawyerChatRequestTemplate(
-  name?: string,
+    name?: string,
 ): string {
-  return `
+    return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -206,10 +206,10 @@ export function getLawyerChatRequestTemplate(
 }
 
 export function getLawyerResponseNotificationTemplate(
-  name?: string,
-  lawyerName?: string,
+    name?: string,
+    lawyerName?: string,
 ): string {
-  return `
+    return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -243,11 +243,11 @@ export function getLawyerResponseNotificationTemplate(
 }
 
 export function getLawyerNotificationTemplate(
-  userName: string,
-  companyName?: string,
-  threadId?: string,
+    userName: string,
+    companyName?: string,
+    threadId?: string,
 ): string {
-  return `
+    return `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -287,3 +287,41 @@ export function getLawyerNotificationTemplate(
 </body>
 </html>`;
 }
+
+export function getBugReportTemplate(
+    name: string,
+    email: string,
+    subject: string,
+    message: string,
+): string {
+    return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Bug Report</title>
+    </head>
+    <body style="font-family: Arial, sans-serif; background-color: #f4f9ff; padding: 20px;">
+      <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+        <div style="padding: 20px; text-align: center; background-color: #eef7ff;">
+          <img src="https://i.postimg.cc/7Z0dVC39/encore-svg.png" alt="Encore Logo" style="height: 40px;">
+        </div>
+        <div style="padding: 20px;">
+          <h2 style="color: #333;">New Bug Report Submitted</h2>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Subject:</strong> ${subject}</p>
+          <p><strong>Message:</strong></p>
+          <p style="white-space: pre-line;">${message}</p>
+        </div>
+        <div style="padding: 10px; text-align: center; background-color: #f8f9fa; color: #999;">
+          <p>Encore Support Team</p>
+          <p>7293 NW 2nd Ave, Miami, FL 33150</p>
+        </div>
+      </div>
+    </body>
+    </html>
+    `;
+}
+
