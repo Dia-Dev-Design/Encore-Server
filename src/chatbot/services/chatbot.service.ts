@@ -1,3 +1,4 @@
+
 import {
   HttpException,
   HttpStatus,
@@ -30,16 +31,19 @@ import { ChatLawyerService } from './chat-lawyer.service';
 import { z } from 'zod';
 import dotenv from 'dotenv';
 import { PoolConfig } from 'pg';
-import pg from 'pg';
 import { MessagesAnnotation } from '@langchain/langgraph';
 import axios from 'axios';
 import { UserTypeEnum } from 'src/user/enums/user-type.enum';
 import { ChatbotLawyerReqStatusEnum, ChatLawyerStatus, ChatTypeEnum } from '../enums/chatbot.enum';
 import { DocHubService } from 'src/dochub/services/dochub.service';
 import { Prisma } from '@prisma/client';
+import { DatabaseService } from 'src/database/database.service';
+import { DocumentListTool } from '../tools/document-list.tool';
+import { SimilaritySearchTool } from '../tools/similarity-search.tool';
+import { FileSelectorTool } from '../tools/file-selector.tool';
+import { DocumentVectorsTool } from '../tools/document-vectors.tool';
 
 dotenv.config();
-const { Pool } = pg;
 
 enum Sentiment {
   GOOD = 'GOOD',
@@ -53,7 +57,6 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   private embeddings: OpenAIEmbeddings;
   private agent: ReturnType<typeof createReactAgent>;
   private splitter: RecursiveCharacterTextSplitter;
-  private pgPool: pg.Pool | null = null;
   private initialized = false;
 
   private agentCache: Map<string, ReturnType<typeof createReactAgent>> = new Map();
@@ -63,7 +66,8 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly chatLawyerService: ChatLawyerService,
-    private readonly docHubService: DocHubService
+    private readonly docHubService: DocHubService,
+    private readonly databaseService: DatabaseService
   ) {
     // Constructor now does minimal work, initialization happens lazily
   }
@@ -74,7 +78,9 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     const config = {
       model: process.env.LANGCHAIN_CHAT_MODEL || 'gpt-3.5-turbo',
       temperature: 0,
+
       apiKey: process.env.OPENAI_API_KEY,
+
       embeddingModel: 'text-embedding-3-small',
       chunkSize: 1000,
       chunkOverlap: 200,
@@ -109,389 +115,90 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     const cacheKey = userId || 'default';
 
     try {
-      // If agent for this userId is already cached and connections are alive, return it
-      if (this.agentCache.has(cacheKey) && this.pgPool && !this.pgPool.ended) {
+      if (this.agentCache.has(cacheKey)) {
         this.agent = this.agentCache.get(cacheKey)!;
         this.currentFileId = cacheKey;
         console.log(`Using cached agent for userId: ${cacheKey}`);
         return;
       }
+      // If agent for this userId is already cached and connections are alive, return it
 
-      console.log(`Initializing new agent for userId: ${cacheKey}`);
+      try {
+        // Check database connection with retry logic
+        let connected = false;
+        let retries = 3;
 
-      await this.closeConnections();
-
-      const retrieveSchema = z.object({ query: z.string() });
-      const retrieve = tool(
-        async ({ query }) => {
-          try {
-            // Check for different types of document queries
-            const isGeneralDocumentQuery =
-              /what|list|tell|any|documents|files|uploaded|shared|have i/i.test(query);
-
-            if (isGeneralDocumentQuery) {
-              try {
-                console.log(`[RETRIEVE] Handling general document query`);
-                const userDocs = await this.docHubService.getUserDocuments(userId);
-                console.log(`[RETRIEVE] Found ${userDocs.length} documents for user ${userId}`);
-                console.log(
-                  `[RETRIEVE] Documents:`,
-                  userDocs.map((d) => d.fileName)
-                );
-
-                if (userDocs.length === 0) {
-                  return ['You have not uploaded any documents yet.', []];
-                }
-
-                // Format the document list with upload dates
-                const docList = userDocs
-                  .map((doc) => {
-                    const uploadDate = new Date(doc.createdAt).toLocaleDateString();
-                    return `- ${doc.fileName} (uploaded on ${uploadDate})`;
-                  })
-                  .join('\n');
-
-                const responseText =
-                  userDocs.length === 1
-                    ? `You have uploaded one document:\n${docList}\nYou can ask me about this document specifically.`
-                    : `You have uploaded the following documents:\n${docList}\nYou can ask me about any of these documents specifically.`;
-
-                return [responseText, []];
-              } catch (error) {
-                console.error(`[RETRIEVE] Error getting user documents:`, error);
-                return ['I was unable to retrieve your document list at this time.', []];
-              }
+        while (!connected && retries > 0) {
+          connected = await this.databaseService.checkConnection();
+          if (!connected) {
+            retries--;
+            if (retries > 0) {
+              console.log(`Database connection failed, retrying... (${retries} attempts left)`);
+              await new Promise((resolve) => setTimeout(resolve, 1000)); // Wait 1 second before retry
             }
-
-            // 1. Get all the user's documents first
-            const userDocs = await this.docHubService.getUserDocuments(userId);
-            console.log(
-              `[RETRIEVE] Available documents:`,
-              userDocs.map((d) => d.fileName)
-            );
-
-            // 2. Check if the query specifically mentions any document names
-            const queryLower = query.toLowerCase();
-            const matchingDocs = [];
-
-            // First try exact filename matching
-            for (const doc of userDocs) {
-              const fileName = doc.fileName.toLowerCase();
-              if (queryLower.includes(fileName)) {
-                matchingDocs.push(doc);
-                console.log(`[RETRIEVE] Found exact document match: ${doc.fileName}`);
-              }
-            }
-
-            // If no exact matches, try looser matching (e.g., 'legal' matches 'legal.pdf')
-            if (matchingDocs.length === 0) {
-              for (const doc of userDocs) {
-                const fileNameWithoutExt = doc.fileName.toLowerCase().split('.')[0];
-                if (queryLower.includes(fileNameWithoutExt)) {
-                  matchingDocs.push(doc);
-                  console.log(`[RETRIEVE] Found partial document match: ${doc.fileName}`);
-                }
-              }
-            }
-
-            // 3. If specific documents are mentioned, search only within those documents
-            if (matchingDocs.length > 0) {
-              console.log(`[RETRIEVE] Found ${matchingDocs.length} documents mentioned in query:`);
-              matchingDocs.forEach((doc) => console.log(`- ${doc.fileName} (${doc.fileId})`));
-
-              // Search within each matching document and combine results
-              let allResults: Document[] = [];
-
-              for (const doc of matchingDocs) {
-                console.log(`[RETRIEVE] Searching within document: ${doc.fileName}`);
-
-                // Create a more general search query without the document name
-                const docNameWithoutExt = doc.fileName.split('.')[0].toLowerCase();
-                const generalizedQuery = query
-                  .toLowerCase()
-                  .replace(doc.fileName.toLowerCase(), '')
-                  .replace(docNameWithoutExt, '')
-                  .replace(/of|about|summary|summarize|my|the/gi, '')
-                  .trim();
-
-                console.log(`[RETRIEVE] Using generalized query: "${generalizedQuery || query}"`);
-
-                const filterParams = {
-                  user_id: userId,
-                  file_id: doc.fileId,
-                };
-
-                // If generalized query is too short, just return all chunks from that document
-                const searchQuery = generalizedQuery.length > 3 ? generalizedQuery : '';
-
-                // First try with similarity search
-                let docResults = await this.docHubService.similaritySearch(
-                  searchQuery || query,
-                  searchQuery ? 3 : 10,
-                  filterParams
-                );
-                console.log(
-                  `[RETRIEVE] Found ${docResults.length} results for ${doc.fileName} with similarity search`
-                );
-
-                // If no results with similarity search, try retrieving chunks directly
-                if (docResults.length === 0) {
-                  console.log(
-                    `[RETRIEVE] No results found with similarity search, trying direct document retrieval`
-                  );
-
-                  try {
-                    // Get the raw document content directly
-                    const rawDocResults = await this.docHubService.getDocumentChunks(
-                      doc.fileId,
-                      userId,
-                      5
-                    );
-
-                    if (rawDocResults && rawDocResults.length > 0) {
-                      console.log(
-                        `[RETRIEVE] Retrieved ${rawDocResults.length} chunks directly from document`
-                      );
-                      docResults = rawDocResults;
-                    } else {
-                      console.log(
-                        `[RETRIEVE] Document appears to have no content in the database!`
-                      );
-
-                      // Check if the document exists in the database at all
-                      const checkResult = await this.docHubService.checkDocumentExists(doc.fileId);
-                      console.log(`[RETRIEVE] Document exists check: ${checkResult}`);
-                    }
-                  } catch (error) {
-                    console.error(`[RETRIEVE] Error retrieving raw document chunks:`, error);
-                  }
-                }
-
-                // Add document name to each result's metadata for better context
-                docResults.forEach((result) => {
-                  result.metadata.documentName = doc.fileName;
-                });
-
-                allResults = [...allResults, ...docResults];
-              }
-
-              if (allResults.length === 0) {
-                return [
-                  `I found a document called "${matchingDocs[0].fileName}", but I couldn't extract any content from it. This may happen if the document is empty, contains only images, or hasn't been properly processed.`,
-                  [],
-                ];
-              }
-
-              // Format the results with document names
-              const serialized = allResults
-                .map(
-                  (doc) =>
-                    `Source: ${doc.metadata.documentName || doc.metadata.source}\nContent: ${doc.pageContent}`
-                )
-                .join('\n\n---\n\n');
-
-              return [serialized, allResults];
-            }
-
-            // 4. Always include business context with every query
-            // First, extract business context from documents
-            console.log(`[RETRIEVE] Extracting business context from documents`);
-            let businessContext: Document[] = [];
-
-            // Try to find business description documents first (look for keywords in filenames)
-            const businessDocKeywords = [
-              'company',
-              'business',
-              'profile',
-              'overview',
-              'about',
-              'description',
-            ];
-            const potentialBusinessDocs = userDocs.filter((doc) =>
-              businessDocKeywords.some((keyword) => doc.fileName.toLowerCase().includes(keyword))
-            );
-
-            // If we found potential business context documents, search them first
-            if (potentialBusinessDocs.length > 0) {
-              console.log(
-                `[RETRIEVE] Found ${potentialBusinessDocs.length} potential business context documents`
-              );
-
-              for (const doc of potentialBusinessDocs) {
-                const contextResults = await this.docHubService.similaritySearch(
-                  'business overview description company profile',
-                  2,
-                  { user_id: userId, file_id: doc.fileId }
-                );
-
-                if (contextResults.length > 0) {
-                  businessContext = [...businessContext, ...contextResults];
-                }
-              }
-            }
-
-            // If we don't have specific business context yet, try a general search across all documents
-            if (businessContext.length === 0) {
-              console.log(`[RETRIEVE] Searching all documents for business context`);
-              businessContext = await this.docHubService.similaritySearch(
-                'business company description overview profile industry sector',
-                3,
-                { user_id: userId }
-              );
-            }
-
-            // 5. Now perform the main query search
-            console.log(`[RETRIEVE] Searching for query: "${query}"`);
-            const filterParams = userId ? { user_id: userId } : {};
-            const retrievedDocs = await this.docHubService.similaritySearch(query, 5, filterParams);
-
-            // 6. Combine the business context with the query results
-            let allResults = [...retrievedDocs];
-
-            // Only add business context if it's not already covered in the main query results
-            if (businessContext.length > 0) {
-              // Add a special marker to identify business context
-              businessContext.forEach((doc) => {
-                doc.metadata.isBusinessContext = true;
-                doc.metadata.contextType = 'business_profile';
-              });
-
-              // Check if we should add business context based on overlap
-              const shouldAddContext = !retrievedDocs.some((doc) =>
-                businessContext.some(
-                  (contextDoc) =>
-                    doc.pageContent.includes(contextDoc.pageContent) ||
-                    contextDoc.pageContent.includes(doc.pageContent)
-                )
-              );
-
-              if (shouldAddContext) {
-                console.log(`[RETRIEVE] Adding ${businessContext.length} business context items`);
-                allResults = [...businessContext, ...retrievedDocs];
-              }
-            }
-
-            if (allResults.length === 0) {
-              return [
-                "I couldn't find any relevant information in your documents for that query.",
-                [],
-              ];
-            }
-
-            // Add document names to results when possible
-            for (const doc of allResults) {
-              if (doc.metadata.file_id) {
-                const matchingDoc = userDocs.find(
-                  (userDoc) => userDoc.fileId === doc.metadata.file_id
-                );
-                if (matchingDoc) {
-                  doc.metadata.documentName = matchingDoc.fileName;
-                }
-              }
-            }
-
-            // Format the results, clearly marking business context
-            const serialized = allResults
-              .map((doc) => {
-                const sourcePrefix = doc.metadata.isBusinessContext
-                  ? 'Business Context from'
-                  : 'Source';
-                return `${sourcePrefix}: ${doc.metadata.documentName || doc.metadata.source}\nContent: ${doc.pageContent}`;
-              })
-              .join('\n\n---\n\n');
-
-            return [serialized, allResults];
-          } catch (error) {
-            console.error('Error in retrieve tool:', error);
-            return ['No matching documents found.', []];
           }
-        },
-        {
-          name: 'retrieve',
-          description:
-            'Retrieve information related to a query from documents uploaded by the user, including relevant business context.',
-          schema: retrieveSchema,
-          responseFormat: 'content_and_artifact',
         }
-      );
 
-      const searchSchema = z.object({ query: z.string() });
-      const searchTool = tool(
-        async ({ query }) => {
-          const url = 'https://api.perplexity.ai/chat/completions';
-          const token = process.env.PERPLEXITY_API_KEY;
-
-          const data = {
-            model: 'sonar-reasoning',
-            messages: [
-              {
-                role: 'system',
-                content: 'Be precise and concise.',
-              },
-              {
-                role: 'user',
-                content: query,
-              },
-            ],
-            max_tokens: null,
-            temperature: 0,
-            top_p: 0.1,
-            search_domain_filter: ['perplexity.ai'],
-            return_images: false,
-            return_related_questions: false,
-            search_recency_filter: 'week',
-            top_k: 0,
-            stream: false,
-            presence_penalty: 0,
-            frequency_penalty: 1,
-            response_format: null,
-          };
-          try {
-            const response = await axios.post(url, data, {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                'Content-Type': 'application/json',
-              },
-            });
-            return response.data.choices[0].message.content;
-          } catch (error) {
-            console.error('Error fetching response:', error.response?.data || error.message);
-            return 'Unable to search for information at this time.';
-          }
-        },
-        {
-          name: 'search',
-          description: 'Search for updated in realtime information on the web related to a query.',
-          schema: searchSchema,
-          responseFormat: 'content',
+        if (!connected && retries <= 0) {
+          throw new HttpException(
+            'Database connection is not available',
+            HttpStatus.SERVICE_UNAVAILABLE
+          );
         }
-      );
+      } catch (error) {
+        // Log error details for debugging
+        console.error(`Error initializing agent for userId ${userId}:`, error);
 
-      /**
-       * Database connection pool configuration optimized for Supabase free tier which has a hard limit of 10 concurrent connections.
-       *
-       * Performance vs Stability tradeoff:
-       * - Lower 'max' (3): Fewer concurrent DB operations but avoids connection errors
-       * - Zero 'min' (0): No idle connections kept open, slightly slower initial queries
-       * - Lower idle timeout: Releases unused connections faster to free up resources
-       *
-       * This should keep us under the 10-connection limit in development while maintaining reasonable performance.
-       */
-      this.pgPool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: {
-          rejectUnauthorized: false,
-        },
-        max: 2,
-        min: 0,
-        idleTimeoutMillis: 5000,
-        connectionTimeoutMillis: 5000,
-      });
+        if (error instanceof HttpException) {
+          throw error;
+        }
 
-      const checkpointSaver = new PostgresSaver(this.pgPool);
+        throw new HttpException(
+          `Cannot initialize chatbot: ${error.message || 'Unknown error'}`,
+          HttpStatus.SERVICE_UNAVAILABLE
+        );
+      }
+
+      // Rest of your initialization code
+      // if (this.agentCache.has(cacheKey)) {
+      //   this.agent = this.agentCache.get(cacheKey)!;
+      //   this.currentFileId = cacheKey;
+      //   console.log(`Using cached agent for userId: ${cacheKey}`);
+      //   return;
+      // }
+
+      // Use PostgresSQL connection string directly with saver - with better error handling
+      let checkpointSaver;
+      try {
+        console.log('Creating PostgresSaver with database connection info');
+        // Use the shared database pool directly with PostgresSaver
+        checkpointSaver = new PostgresSaver(this.databaseService.getPool());
+        console.log('PostgresSaver created successfully');
+      } catch (saverError) {
+        console.error('Failed to create PostgresSaver:', saverError);
+        throw new HttpException(
+          'Error initializing agent persistence layer',
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
+
+      const documentListTool = new DocumentListTool(this.docHubService, userId);
+      const similaritySearchTool = new SimilaritySearchTool(this.docHubService, userId);
+      const fileSelectorTool = new FileSelectorTool(this.docHubService);
+      const documentVectorsTool = new DocumentVectorsTool(this.docHubService, userId);
+
+      // Create a tools description string dynamically
+      const toolsDescription = `
+                                Available tools:
+                                - document_list: ${documentListTool.description}
+                                - similarity_search: ${similaritySearchTool.description}
+                                - file_selector: ${fileSelectorTool.description}
+                                - document_vectors: ${documentVectorsTool.description}
+                                `;
+
       this.agent = await createReactAgent({
         llm: this.llm,
-        tools: userId ? [retrieve, searchTool] : [searchTool],
+        tools: [documentListTool, similaritySearchTool.tool, fileSelectorTool.tool, documentVectorsTool.tool],
         checkpointSaver: checkpointSaver,
         stateModifier: async (state: typeof MessagesAnnotation.State): Promise<BaseMessage[]> => {
           return trimMessages(
@@ -513,6 +220,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 4. For questions requiring current information or recent legal developments, use the **search tool**
                 5. Clearly indicate when information might vary by jurisdiction
                 6. Include appropriate disclaimers when the legal situation is complex or ambiguous
+                7. Use the **similarity_search** tool to enrich your responses with relevant context from the user's documents
 
                 When handling document-related inquiries:
                 1. If the user asks generally about what documents they have shared or uploaded, provide a list of their documents
@@ -520,6 +228,10 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 3. If the user wants to compare or analyze multiple documents, retrieve information from all relevant documents
                 4. Always cite document names when providing information from documents
                 5. If a document search returns no results, suggest the user try different keywords or upload relevant documents
+                6. Use the **similarity_search** tool to find relevant content across all documents when answering questions
+
+                You can use any of the following tools to help you answer the user's question:
+                ${toolsDescription}
 
                 Important boundaries:
                 - Do NOT provide advice on how to circumvent laws or engage in illegal activities
@@ -535,10 +247,6 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                 - Providing non-legal information
                 - Summarizing factual information from documents without legal analysis
                 - Responding to general chat or small talk
-
-                If searching for documents:
-                - If no relevant documents are found using the **retrieve tool**, clearly inform the user while offering alternative assistance
-                - When documents are found, cite them appropriately in your response
                 `
               ),
               ...state.messages,
@@ -565,7 +273,6 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
       console.log(`Agent initialized and cached for userId: ${cacheKey}`);
     } catch (error) {
       console.error(`Error initializing agent for userId ${userId}:`, error);
-      await this.closeConnections();
       throw new HttpException(
         `Error initializing chatbot: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
@@ -726,6 +433,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
             chatType: thread.chatType,
             files: [],
             messages: [],
+            forLawyer: thread.chatType === 'CHAT_LAWYER'
           };
         }
 
@@ -742,12 +450,14 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                   id: msg.id,
                   role: 'user',
                   content: msg.content,
+                  forLawyer: thread.chatType === 'CHAT_LAWYER'
                 };
               } else {
                 return {
                   id: msg.id,
                   role: 'ai',
                   content: msg.content,
+                  forLawyer: false
                 };
               }
             }) || [];
@@ -860,6 +570,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                   content: message.kwargs.content,
                   role: 'ai',
                   checkpoint_id: checkpointId,
+                  forLawyer: false
                 }));
               }
             } else {
@@ -875,6 +586,7 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
                   content: message.content,
                   role: 'user',
                   checkpoint_id: checkpointId,
+                  forLaweyer: thread.chatType === 'CHAT_LAWYER'
                 }));
               }
             }
@@ -1030,26 +742,65 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  async createThread(userId: string) {
+  async createThread(userId: string, title?: string) {
     try {
       // First, make sure userId is not undefined or empty
       if (!userId) {
         throw new BadRequestException('User ID is required to create a chat thread');
       }
-
-      console.log('Creating thread for user ID:', userId); // Add debugging
-
-      const thread = await this.prisma.chatThread.create({
-        data: {
-          User: {
-            connect: {
-              id: userId,
-            },
-          },
+  
+      const userCompany = await this.prisma.userCompany.findFirst({
+        where: {
+          userId,
+        },
+        include: {
+          Company: true,
         },
       });
+  
+      if (!userCompany) {
+        throw new NotFoundException(`No company found for user ID ${userId}`);
+      }
+  
+      console.log("This is the userCompany++++>", userCompany.Company);
+  
+      const companyId = userCompany.Company.id;
+    
+      console.log('Creating thread for user ID:', userId, 'companyId:', companyId);
+    
+      // Prepare the thread data
+      const threadData: any = {
+        userId: userId // Direct assignment instead of connect
+      };
+  
+      // If we have a title, add it
+      if (title) {
+        threadData.title = title;
+      }
+    
+      // Find or create the ChatCompany
+      let chatCompany = await this.prisma.chatCompany.findUnique({
+        where: { companyId },
+      });
+  
+      if (!chatCompany) {
+        console.log(`No ChatCompany found for company ID ${companyId}, creating one`);
+        // Create a ChatCompany if it doesn't exist
+        chatCompany = await this.prisma.chatCompany.create({
+          data: {
+            companyId,
+            lawyerReqStatus: 'PENDING', // Adjust based on your schema
+          },
+        });
+      }
+      // IMPORTANT: Set the chatCompanyId directly
+      threadData.chatCompanyId = chatCompany.id;  
+      // Create the thread with all necessary data
+      const thread = await this.prisma.chatThread.create({
+        data: threadData,
+      });
+    
 
-      console.log('Thread created:', thread); // Add debugging
       return thread;
     } catch (error) {
       // Handle error appropriately
@@ -1437,44 +1188,119 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
     }
   }
 
-  async getAllThreadsForAdmin(companyId: string, userId: string) {
-    try {
-      const threads = await this.prisma.chatThread.findMany({
-        where: { ChatCompany: { Company: { id: companyId } } },
-        orderBy: { createdAt: 'desc' },
-      });
+  async getAllThreadsForAdmin(companyId: string, adminId: string) {
 
+    const threads = await this.prisma.chatThread.findMany({
+      where: { chatCompanyId: companyId },
+    });
+    try {
+
+      console.log(`Company ID: ${companyId}, Admin ID: ${adminId}`);
+      
+      // First check if the admin exists
+      const adminExists = await this.prisma.staffUser.findUnique({
+        where: { id: adminId }
+      });
+      console.log(`Admin exists: ${!!adminExists}`);
+      
+      // Check if company exists
+      const companyExists = await this.prisma.company.findUnique({
+        where: { id: companyId }
+      });
+      console.log(`Company exists: ${!!companyExists}`);
+      
+      // Check all ChatCompany records to debug
+      const allChatCompanies = await this.prisma.chatCompany.findMany();
+      console.log(`Total ChatCompany records: ${allChatCompanies.length}`);
+      console.log("All ChatCompany companyIds:", allChatCompanies.map(cc => cc.companyId));
+      
+      // Check if this specific ChatCompany exists
+      const chatCompany = await this.prisma.chatCompany.findUnique({
+        where: { companyId: companyId }
+      });
+      console.log(`ChatCompany for this company exists: ${!!chatCompany}`);
+      
+      if (!chatCompany) {
+        console.log("No ChatCompany found, returning empty array");
+        return [];
+      }
+      
+      // Check all ChatThread records to debug
+      const allChatThreads = await this.prisma.chatThread.count();
+      console.log(`Total ChatThread records in database: ${allChatThreads}`);
+      
+      // Check threads that match our specific ChatCompany
+      const filteredThreads = await this.prisma.chatThread.findMany({
+        where: { chatCompanyId: chatCompany.id }
+      });
+      console.log(`Found ${filteredThreads.length} threads for chatCompanyId: ${chatCompany.id}`);
+      
+      if (filteredThreads.length === 0) {
+        // Verify the structure of a ChatThread to ensure fields match
+        const sampleThread = await this.prisma.chatThread.findFirst();
+        if (sampleThread) {
+          console.log("Sample thread structure:", Object.keys(sampleThread));
+          console.log("Sample thread chatCompanyId:", sampleThread.chatCompanyId);
+        }
+        
+        // Try a raw query to bypass Prisma
+        try {
+          const rawResults = await this.prisma.$queryRaw`
+            SELECT t.id, t."chatCompanyId", c."companyId"
+            FROM "ChatThread" t
+            LEFT JOIN "ChatCompany" c ON t."chatCompanyId" = c.id
+            WHERE c."companyId" = ${companyId}
+          `;
+          console.log("Raw SQL results:", rawResults);
+        } catch (sqlError) {
+          console.error("SQL query error:", sqlError);
+        }
+        
+        return [];
+      }
+      
+      // Continue with the original thread processing
       const listThreads = [];
-      for (const thread of threads) {
+      for (const thread of filteredThreads) {
         let isLawyer = false;
         let canWrite = false;
-        if (thread.chatType === ChatTypeEnum.CHAT_LAWYER) {
+        
+        console.log(`Processing thread ID: ${thread.id}, chatType: ${thread.chatType}`);
+        
+        if (thread.chatType === 'CHAT_LAWYER') {
           const chatLawyer = await this.prisma.chatLawyer.findFirst({
             where: {
               ChatThreadId: thread.id,
-              status: ChatLawyerStatus.ACTIVE,
-              lawyerId: userId,
+              status: 'ACTIVE',
+              lawyerId: adminId,
             },
           });
+          
           if (chatLawyer) {
             isLawyer = true;
             canWrite = true;
           }
+          
+          console.log(`Thread ${thread.id} lawyer status: isLawyer=${isLawyer}, canWrite=${canWrite}`);
         }
-
+  
         listThreads.push({
           ...thread,
           isLawyer,
           canWrite,
         });
       }
-
+  
+      console.log(`Final processed threads: ${listThreads.length}`);
       return listThreads;
+      
     } catch (error) {
-      console.error('Error retrieving all threads :', error);
-
+      console.error('Error retrieving all threads:', error);
+      // Log the full error stack
+      console.error('Stack trace:', error.stack);
+      
       throw new HttpException(
-        `Error retrieving all threads : ${error.message}`,
+        `Error retrieving all threads: ${error.message}`,
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
@@ -1482,23 +1308,17 @@ export class ChatbotService implements OnModuleDestroy, OnModuleInit {
 
   async closeConnections() {
     try {
-      if (this.pgPool) {
-        await this.pgPool.end();
-        this.pgPool = null;
-      }
-
-      // Clear the current fileId
+      // We no longer need to close the pool since it's managed by DatabaseService
+      // Just clear the current fileId
       this.currentFileId = null;
     } catch (error) {
-      console.error('Error closing database connections:', error);
+      console.error('Error closing connections:', error);
     }
   }
 
   // Implement OnModuleDestroy
   async onModuleDestroy() {
-    console.log(
-      'ChatbotService is being destroyed. Closing database connections and clearing agent cache...'
-    );
+    console.log('ChatbotService is being destroyed. Clearing agent cache...');
     // Clear the agent cache
     this.agentCache.clear();
     await this.closeConnections();

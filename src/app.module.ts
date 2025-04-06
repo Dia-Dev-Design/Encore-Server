@@ -21,6 +21,7 @@ import { FoldersModule } from './folders/folders.module';
 import { ChatbotModule } from './chatbot/chatbot.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { DocHubModule } from './dochub/dochub.module';
+import { DatabaseModule } from './database/database.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { DocHubModule } from './dochub/dochub.module';
       isGlobal: true,
     }),
     PrismaModule,
+    DatabaseModule,
     UserModule,
     AuthModule,
     EmailModule,

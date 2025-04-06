@@ -34,7 +34,7 @@ export class DocHubController {
   constructor(
     private readonly docHubService: DocHubService,
     private readonly s3Service: S3Service,
-    private readonly companyService: CompaniesService,
+    private readonly companyService: CompaniesService
   ) {}
 
   @Post('upload')
@@ -44,28 +44,18 @@ export class DocHubController {
     status: 200,
     description: 'Document successfully uploaded and processed',
   })
-  async uploadDocument(
-    @UploadedFile() file: Express.Multer.File,
-    @User() user: UserEntity,
-  ) {
+  async uploadDocument(@UploadedFile() file: Express.Multer.File, @User() user: UserEntity) {
     try {
       const userCompany = await this.companyService.getUserCompany(user.id);
       if (!userCompany) {
-        throw new HttpException(
-          'User is not associated with any company',
-          HttpStatus.BAD_REQUEST,
-        );
+        throw new HttpException('User is not associated with any company', HttpStatus.BAD_REQUEST);
       }
 
-      const company = await this.companyService.getCompanyById(
-        userCompany.companyId,
-      );
+      const company = await this.companyService.getCompanyById(userCompany.companyId);
 
       let rootFolderId = company.rootFolderId;
       if (!rootFolderId) {
-        rootFolderId = await this.companyService.ensureCompanyRootFolder(
-          company.id,
-        );
+        rootFolderId = await this.companyService.ensureCompanyRootFolder(company.id);
       }
 
       const fileReference = await this.s3Service.uploadFile(file, FileType.AI, {
@@ -73,11 +63,7 @@ export class DocHubController {
         rootFolderId: rootFolderId,
       });
 
-      await this.docHubService.processDocument(
-        file.buffer,
-        fileReference.id,
-        user.id,
-      );
+      await this.docHubService.processDocument(file.buffer, fileReference.id, user.id);
 
       return {
         success: true,
@@ -87,7 +73,7 @@ export class DocHubController {
     } catch (error) {
       throw new HttpException(
         `Error uploading document: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -101,45 +87,30 @@ export class DocHubController {
   })
   async uploadMultipleDocuments(
     @UploadedFiles() files: Express.Multer.File[],
-    @User() user: UserEntity,
+    @User() user: UserEntity
   ) {
     try {
       const userCompany = await this.companyService.getUserCompany(user.id);
       if (!userCompany) {
-        throw new HttpException(
-          'User is not associated with any company',
-          HttpStatus.BAD_REQUEST,
-        );
+        throw new HttpException('User is not associated with any company', HttpStatus.BAD_REQUEST);
       }
 
-      const company = await this.companyService.getCompanyById(
-        userCompany.companyId,
-      );
+      const company = await this.companyService.getCompanyById(userCompany.companyId);
 
       let rootFolderId = company.rootFolderId;
       if (!rootFolderId) {
-        rootFolderId = await this.companyService.ensureCompanyRootFolder(
-          company.id,
-        );
+        rootFolderId = await this.companyService.ensureCompanyRootFolder(company.id);
       }
 
       const results = await Promise.all(
         files.map(async (file) => {
           try {
-            const fileReference = await this.s3Service.uploadFile(
-              file,
-              FileType.AI,
-              {
-                userId: user.id,
-                rootFolderId: rootFolderId,
-              },
-            );
+            const fileReference = await this.s3Service.uploadFile(file, FileType.AI, {
+              userId: user.id,
+              rootFolderId: rootFolderId,
+            });
 
-            await this.docHubService.processDocument(
-              file.buffer,
-              fileReference.id,
-              user.id,
-            );
+            await this.docHubService.processDocument(file.buffer, fileReference.id, user.id);
 
             return {
               success: true,
@@ -153,7 +124,7 @@ export class DocHubController {
               error: error.message,
             };
           }
-        }),
+        })
       );
 
       const successCount = results.filter((result) => result.success).length;
@@ -168,7 +139,7 @@ export class DocHubController {
     } catch (error) {
       throw new HttpException(
         `Error uploading documents: ${error.message}`,
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
   }
@@ -193,7 +164,7 @@ export class DocHubController {
     @User() user: UserEntity,
     @Req() req: Request, // Use @Req() instead of @Request()
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '8',
+    @Query('limit') limit: string = '8'
   ) {
     // Log the user object
     console.log('User object from token:', req.user);
@@ -207,16 +178,34 @@ export class DocHubController {
 
     if (token) {
       // Decode the JWT to see its payload
-      const decodedToken = JSON.parse(
-        Buffer.from(token.split('.')[1], 'base64').toString(),
-      );
+      const decodedToken = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
       console.log('Decoded JWT payload:', decodedToken);
     }
 
     return this.docHubService.getUserDocumentsWithUrls(
       user.id,
       parseInt(page, 10),
-      parseInt(limit, 10),
+      parseInt(limit, 10)
+    );
+  }
+
+  @Get('company-documents/with-urls')
+  @UseGuards(StaffJwtAuthGuard)
+  @ApiBearerAuth()
+  @StaffAuth()
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully retrieved company documents with signed URLs',
+  })
+  async getCompanyDocumentsWithUrls(
+    @Query('companyId') companyId: string,
+    @Query('page') page: string = '1',
+    @Query('limit') limit: string = '8'
+  ) {
+    return this.docHubService.getCompanyDocumentsWithUrls(
+      companyId,
+      parseInt(page, 10),
+      parseInt(limit, 10)
     );
   }
 
@@ -231,12 +220,12 @@ export class DocHubController {
   async getUserDocumentsWithUrlsByUserId(
     @Param('userId') userId: string,
     @Query('page') page: string = '1',
-    @Query('limit') limit: string = '8',
+    @Query('limit') limit: string = '8'
   ) {
     return this.docHubService.getUserDocumentsWithUrls(
       userId,
       parseInt(page, 10),
-      parseInt(limit, 10),
+      parseInt(limit, 10)
     );
   }
 
@@ -254,16 +243,27 @@ export class DocHubController {
     return this.docHubService.getUserDocument(documentId, res);
   }
 
+  @Get('company-documents/:id/stream')
+  @Public()
+  @ApiResponse({
+    status: 200,
+    description: 'Successfully streamed company document',
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Company document not found',
+  })
+  async streamCompanyDocument(@Param('id') documentId: string, @Res() res: Response) {
+    return this.docHubService.getCompanyDocument(documentId, res);
+  }
+
   @Delete('documents/:id')
   @ApiBearerAuth()
   @ApiResponse({
     status: 200,
     description: 'Document successfully deleted',
   })
-  async deleteDocument(
-    @Param('id') documentId: string,
-    @User() user: UserEntity,
-  ) {
+  async deleteDocument(@Param('id') documentId: string, @User() user: UserEntity) {
     return this.docHubService.deleteUserDocument(user.id, documentId);
   }
 
@@ -280,4 +280,16 @@ export class DocHubController {
     return this.docHubService.getUsersByLawyer(lawyerId);
   }
 
+  @Get('assigned-companies/:adminId')
+  @UseGuards(StaffJwtAuthGuard)
+  @ApiBearerAuth()
+  @StaffAuth()
+  @ApiResponse({
+    status: 200,
+    description: 'Company IDs fetched successfully',
+    type: Array,
+  })
+  async getCompaniesByAdmin(@Param('adminId') adminId: string, @Req() req: Request) {
+    return this.docHubService.getCompaniesByAdmin(adminId);
+  }
 }

@@ -4,8 +4,9 @@ import {
   Param,
   Post,
   Query,
-  Request,
+  // Request,
   Sse,
+  Req
 } from '@nestjs/common';
 
 import { Observable } from 'rxjs';
@@ -16,6 +17,12 @@ import { ApiBearerAuth, ApiBody } from '@nestjs/swagger';
 import { UserTypeEnum } from '../../user/enums/user-type.enum';
 import { StaffAuth } from '../../auth/decorators/staff-auth.decorator';
 import { Public } from '../../auth/decorators/public.decorator';
+import { Request } from 'express';
+
+import { GetUserId } from '../dto/message-lawyer.dto';
+
+
+
 
 @Controller('chatbot/lawyer-chat')
 export class ChatbotLawyerController {
@@ -59,7 +66,7 @@ export class ChatbotLawyerController {
   async sendMessage(
     @Body() payload: CreateMessageForChatLawyerDto,
     @Param('chatThreadId') chatThreadId: string,
-    @Request() req,
+    @Req() req,
   ) {
     return await this.chatLawyerService.sendMessage(
       chatThreadId,
@@ -77,7 +84,7 @@ export class ChatbotLawyerController {
   async sendMessageLawyer(
     @Body() payload: CreateMessageForChatLawyerDto,
     @Param('chatThreadId') chatThreadId: string,
-    @Request() req,
+    @Req() req,
   ) {
     return await this.chatLawyerService.sendMessage(
       chatThreadId,
@@ -90,7 +97,7 @@ export class ChatbotLawyerController {
   @Post('request/:chatThreadId')
   @ApiBearerAuth()
   async requestLawyer(
-    @Request() req,
+    @Req() req,
     @Param('chatThreadId') chatThreadId: string,
   ) {
     return await this.chatLawyerService.requestLawyer(
@@ -101,22 +108,24 @@ export class ChatbotLawyerController {
 
   // Special admin endpoint with no authentication checks
   @Post('admin-message/:chatThreadId')
-  @Public()
+  @StaffAuth()
+  @ApiBearerAuth()
   @ApiBody({ type: CreateMessageForChatLawyerDto })
   async sendAdminMessage(
     @Body() payload: CreateMessageForChatLawyerDto,
+    @GetUserId() userId: string,
     @Param('chatThreadId') chatThreadId: string,
-    @Body('userId') userId: string,
+    @Req() req: Request, // Add this to access the authenticated user
   ) {
     console.log(
       `Admin message endpoint called for thread ${chatThreadId}, userId: ${userId}`,
     );
-
+    
     // Call a special method that skips permission checks
     return await this.chatLawyerService.sendAdminMessage(
       chatThreadId,
       payload,
-      userId || '85ca85a2-84fb-4246-99bd-6673ffe5e281', // default to the admin ID if not provided
+      userId
     );
   }
 

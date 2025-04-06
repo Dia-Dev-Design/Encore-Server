@@ -11,6 +11,8 @@ export class UserEntity implements User {
   createdAt: Date;
   updatedAt: Date;
   isAdmin: boolean;
+  isActivated: boolean;
+  registered: boolean;
   constructor(partial: Partial<UserEntity>) {
     Object.assign(this, partial);
   }
