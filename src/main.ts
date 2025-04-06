@@ -11,6 +11,7 @@ import helmet from 'helmet';
 import { JwtAuthGuard } from './auth/auth.guard';
 import { StaffJwtAuthGuard } from './auth/staff-auth.guard';
 import logger from 'morgan';
+import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
 
 const config = configuration();
@@ -36,6 +37,9 @@ async function bootstrap() {
         },
       })
     );
+
+
+    app.useGlobalFilters(new GlobalExceptionFilter());
 
     const swaggerConfig = new DocumentBuilder()
       .setTitle('Encore API')

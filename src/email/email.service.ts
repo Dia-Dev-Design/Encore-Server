@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { MailDataRequired } from '@sendgrid/mail';
 import { SendGridClient } from './sendgrid-client';
 import { ConfigService } from '@nestjs/config';
@@ -13,6 +13,8 @@ import {
 
 @Injectable()
 export class EmailService {
+  private readonly logger = new Logger(EmailService.name);
+  
   constructor(
     private readonly sendGridClient: SendGridClient,
     private readonly configService: ConfigService,
@@ -35,12 +37,16 @@ export class EmailService {
   }
 
   async sendVerificationEmail(recipient: string, token: string): Promise<void> {
-    const frontendUrl = `${this.configService.get('frontendUrl')}/verify-email?token=${encodeURIComponent(token)}`;
-    this.sendGridClient.send({
-      to: recipient,
-      subject: 'Verify your email',
-      html: getVerifyEmailTemplate(frontendUrl),
-    });
+    try {
+      const frontendUrl = `${this.configService.get('frontendUrl')}/verify-email?token=${encodeURIComponent(token)}`;
+      await this.sendGridClient.send({
+        to: recipient,
+        subject: 'Verify your email',
+        html: getVerifyEmailTemplate(frontendUrl),
+      });
+    } catch (error) {
+      this.logger.error(`[Email] Failed to send verification email to ${recipient}`, error);
+    }
   }
 
   async sendPasswordResetEmail(
@@ -48,23 +54,31 @@ export class EmailService {
     token: string,
     name?: string,
   ): Promise<void> {
-    const frontendUrl = `${this.configService.get('frontendUrl')}/reset-password?token=${encodeURIComponent(token)}`;
-    this.sendGridClient.send({
-      to: recipient,
-      subject: 'Reset your password',
-      html: getResetPasswordTemplate(frontendUrl, name),
-    });
+    try {
+      const frontendUrl = `${this.configService.get('frontendUrl')}/reset-password?token=${encodeURIComponent(token)}`;
+      await this.sendGridClient.send({
+        to: recipient,
+        subject: 'Reset your password',
+        html: getResetPasswordTemplate(frontendUrl, name),
+      });
+    } catch (error) {
+      this.logger.error(`[Email] Failed to send password reset email to ${recipient}`, error);
+    }
   }
 
   async sendLawyerChatRequestEmail(
     recipient: string,
     name?: string,
   ): Promise<void> {
-    this.sendGridClient.send({
-      to: recipient,
-      subject: 'Your Chat with a Lawyer Request',
-      html: getLawyerChatRequestTemplate(name),
-    });
+    try {
+      await this.sendGridClient.send({
+        to: recipient,
+        subject: 'Your Chat with a Lawyer Request',
+        html: getLawyerChatRequestTemplate(name),
+      });
+    } catch (error) {
+      this.logger.error(`[Email] Failed to send lawyer chat request email to ${recipient}`, error);
+    }
   }
 
   async sendLawyerResponseNotificationEmail(
@@ -72,11 +86,15 @@ export class EmailService {
     name?: string,
     lawyerName?: string,
   ): Promise<void> {
-    this.sendGridClient.send({
-      to: recipient,
-      subject: 'A Lawyer Has Responded to Your Chat',
-      html: getLawyerResponseNotificationTemplate(name, lawyerName),
-    });
+    try {
+      await this.sendGridClient.send({
+        to: recipient,
+        subject: 'A Lawyer Has Responded to Your Chat',
+        html: getLawyerResponseNotificationTemplate(name, lawyerName),
+      });
+    } catch (error) {
+      this.logger.error(`[Email] Failed to send lawyer response notification email to ${recipient}`, error);
+    }
   }
 
   async sendLawyerNotificationEmail(
@@ -85,11 +103,15 @@ export class EmailService {
     companyName?: string,
     threadId?: string,
   ): Promise<void> {
-    this.sendGridClient.send({
-      to: lawyerEmail,
-      subject: 'New Chat Request from a User',
-      html: getLawyerNotificationTemplate(userName, companyName, threadId),
-    });
+    try {
+      await this.sendGridClient.send({
+        to: lawyerEmail,
+        subject: 'New Chat Request from a User',
+        html: getLawyerNotificationTemplate(userName, companyName, threadId),
+      });
+    } catch (error) {
+      this.logger.error(`[Email] Failed to send lawyer notification email to ${lawyerEmail}`, error);
+    }
   }
 
   async sendBugReportEmail(
