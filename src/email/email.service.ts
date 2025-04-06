@@ -8,7 +8,9 @@ import {
   getLawyerChatRequestTemplate,
   getLawyerResponseNotificationTemplate,
   getLawyerNotificationTemplate,
-  getBugReportTemplate
+  getBugReportTemplate,
+  getFeatureRequestTemplate,
+  getFeedbackTemplate
 } from './templates';
 
 @Injectable()
@@ -120,13 +122,50 @@ export class EmailService {
     subject: string,
     message: string,
   ): Promise<void> {
-    const supportEmail = process.env.SUPPORT_EMAIL
-
-    await this.sendGridClient.send({
-      to: supportEmail,
-      subject: `New Bug Report`,
-      html: getBugReportTemplate(name, userEmail, subject, message),
-    });
+    try {
+      await this.sendGridClient.send({
+        to: process.env.MAIL_SENDER_BUGS_RECIPIENT_TO,
+        subject: `New Bug Report`,
+        html: getBugReportTemplate(name, userEmail, subject, message),
+      });
+    } catch (error) {
+      console.log("sendBugReportEmail - error:", error)
+    }
   }
+
+  async sendFeatureRequestEmail(
+    name: string,
+    userEmail: string,
+    subject: string,
+    message: string,
+  ): Promise<void> {
+    try {
+      await this.sendGridClient.send({
+        to: process.env.MAIL_SENDER_FEATURES_RECIPIENT_TO,
+        subject: `New Feature Request`,
+        html: getFeatureRequestTemplate(name, userEmail, subject, message),
+      });
+    } catch (error) {
+      console.log("sendFeatureRequestEmail - error:", error)
+    }
+  }
+
+  async sendFeedbackEmail(
+    name: string,
+    userEmail: string,
+    subject: string,
+    message: string,
+  ): Promise<void> {
+    try {
+      await this.sendGridClient.send({
+        to: process.env.MAIL_SENDER_FEEDBACK_RECIPIENT_TO,
+        subject: `New Feedback Submission`,
+        html: getFeedbackTemplate(name, userEmail, subject, message),
+      });
+    } catch (error) {
+      console.log("sendFeedbackEmail - error:", error)
+    }
+  }
+
 
 }
