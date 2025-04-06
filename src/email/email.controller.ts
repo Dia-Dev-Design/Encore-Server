@@ -13,7 +13,7 @@ class SendTestEmailDto {
   body?: string;
 }
 
-class BugReportDto {
+class EmailDTO {
   @IsString()
   name: string;
 
@@ -52,7 +52,7 @@ export class EmailController {
   @Public()
   @Post('bug-report')
   async sendBugReport(
-    @Body() bugReportDto: BugReportDto,
+    @Body() bugReportDto: EmailDTO,
   ): Promise<{ message: string }> {
     try {
       await this.emailService.sendBugReportEmail(
@@ -66,5 +66,42 @@ export class EmailController {
       throw new BadRequestException(error.message || 'Failed to send bug report email');
     }
   }
+
+  @Public()
+  @Post('feature-request')
+  async sendFeatureRequest(
+    @Body() dto: EmailDTO,
+  ): Promise<{ message: string }> {
+    try {
+      await this.emailService.sendFeatureRequestEmail(
+        dto.name,
+        dto.email,
+        dto.subject,
+        dto.message,
+      );
+      return { message: 'Feature request sent successfully' };
+    } catch (error) {
+      throw new BadRequestException(error.message || 'Failed to send feature request email');
+    }
+  }
+
+  @Public()
+  @Post('feedback')
+  async sendFeedback(
+    @Body() dto: EmailDTO,
+  ): Promise<{ message: string }> {
+    try {
+      await this.emailService.sendFeedbackEmail(
+        dto.name,
+        dto.email,
+        dto.subject,
+        dto.message,
+      );
+      return { message: 'Feedback sent successfully' };
+    } catch (error) {
+      throw new BadRequestException(error.message || 'Failed to send feedback email');
+    }
+  }
+
 
 } 

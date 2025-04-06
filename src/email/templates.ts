@@ -326,3 +326,78 @@ export function getBugReportTemplate(
     `;
 }
 
+export function getFeatureRequestTemplate(
+    name: string,
+    email: string,
+    subject: string,
+    message: string,
+): string {
+    return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Feature Request</title>
+    </head>
+    <body style="font-family: Arial, sans-serif; background-color: #f4f9ff; padding: 20px;">
+      <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+        <div style="padding: 20px; text-align: center; background-color: #eef7ff;">
+          <img src="https://i.postimg.cc/7Z0dVC39/encore-svg.png" alt="Encore Logo" style="height: 40px;">
+        </div>
+        <div style="padding: 20px;">
+          <h2 style="color: #333;">New Feature Request Submitted</h2>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Subject:</strong> ${subject}</p>
+          <p><strong>Message:</strong></p>
+          <p style="white-space: pre-line;">${message}</p>
+        </div>
+        <div style="padding: 10px; text-align: center; background-color: #f8f9fa; color: #999;">
+          <p>Encore Support Team</p>
+          <p>7293 NW 2nd Ave, Miami, FL 33150</p>
+        </div>
+      </div>
+    </body>
+    </html>
+    `;
+}
+
+export function getFeedbackTemplate(
+    name: string,
+    email: string,
+    subject: string,
+    message: string,
+): string {
+    return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Feedback</title>
+    </head>
+    <body style="font-family: Arial, sans-serif; background-color: #f4f9ff; padding: 20px;">
+      <div style="max-width: 600px; margin: auto; background: #ffffff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+        <div style="padding: 20px; text-align: center; background-color: #eef7ff;">
+          <img src="https://i.postimg.cc/7Z0dVC39/encore-svg.png" alt="Encore Logo" style="height: 40px;">
+        </div>
+        <div style="padding: 20px;">
+          <h2 style="color: #333;">New Feedback Submitted</h2>
+          <p><strong>Name:</strong> ${name}</p>
+          <p><strong>Email:</strong> ${email}</p>
+          <p><strong>Subject:</strong> ${subject}</p>
+          <p><strong>Message:</strong></p>
+          <p style="white-space: pre-line;">${message}</p>
+        </div>
+        <div style="padding: 10px; text-align: center; background-color: #f8f9fa; color: #999;">
+          <p>Encore Support Team</p>
+          <p>7293 NW 2nd Ave, Miami, FL 33150</p>
+        </div>
+      </div>
+    </body>
+    </html>
+    `;
+}
+
+
