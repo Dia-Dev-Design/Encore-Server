@@ -22,6 +22,7 @@ async function bootstrap() {
   try {
     const app = await NestFactory.create(AppModule, {
       //forceCloseConnections: true,
+      cors: false,
     });
     log.log('NestFactory created successfully');
     app.use(logger('dev'));
@@ -49,18 +50,23 @@ async function bootstrap() {
       .build();
     const document = SwaggerModule.createDocument(app, swaggerConfig);
 
+    // const app = await NestFactory.create(AppModule, {
+    //   // Disable CORS entirely
+    //   cors: false,
+    // });
+
     const reflector = app.get(Reflector);
     log.log('Applying global guards...');
     app.useGlobalGuards(new JwtAuthGuard(reflector));
     log.log('Global guards applied successfully');
 
     // TODO: Remove this in production
-    app.enableCors({
-      origin: ['http://localhost:3000', 'https://dev.startupencore.ai', 'https://master.d1n36kjhcunlw5.amplifyapp.com'],
-      methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    });
+    // app.enableCors({
+    //   origin: ['http://localhost:3000', 'https://dev.startupencore.ai', 'https://master.d1n36kjhcunlw5.amplifyapp.com'],
+    //   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    // });
 
-    const port = config.port || 3001;
+    const port = config.port || 3000;
 
     SwaggerModule.setup('api/docs', app, document);
     await app.listen(port);
