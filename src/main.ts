@@ -1,10 +1,7 @@
 import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
-import {
-  DocumentBuilder,
-  SwaggerCustomOptions,
-  SwaggerModule,
-} from '@nestjs/swagger';
+import { DocumentBuilder, SwaggerCustomOptions, SwaggerModule } from '@nestjs/swagger';
+import { Request, Response, NextFunction } from 'express';
 import configuration from './config/config';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
@@ -12,7 +9,6 @@ import { JwtAuthGuard } from './auth/auth.guard';
 import { StaffJwtAuthGuard } from './auth/staff-auth.guard';
 import logger from 'morgan';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
-
 
 const config = configuration();
 
@@ -23,6 +19,19 @@ async function bootstrap() {
     const app = await NestFactory.create(AppModule, {
       //forceCloseConnections: true,
       cors: false,
+    });
+
+    app.enableCors({
+      origin: false,
+    });
+
+    // Add middleware to remove any CORS headers that might still be added
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      res.removeHeader('Access-Control-Allow-Origin');
+      res.removeHeader('Access-Control-Allow-Methods');
+      res.removeHeader('Access-Control-Allow-Headers');
+      res.removeHeader('Access-Control-Allow-Credentials');
+      next();
     });
     log.log('NestFactory created successfully');
     app.use(logger('dev'));
@@ -38,7 +47,6 @@ async function bootstrap() {
         },
       })
     );
-
 
     app.useGlobalFilters(new GlobalExceptionFilter());
 
@@ -61,10 +69,6 @@ async function bootstrap() {
     log.log('Global guards applied successfully');
 
     // TODO: Remove this in production
-    // app.enableCors({
-    //   origin: ['http://localhost:3000', 'https://dev.startupencore.ai', 'https://master.d1n36kjhcunlw5.amplifyapp.com'],
-    //   methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
-    // });
 
     const port = config.port || 3000;
 
