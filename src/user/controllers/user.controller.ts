@@ -56,8 +56,8 @@ export class UserController {
   }
 
   @Get('admin/non-activated')
-  @UseGuards(StaffJwtAuthGuard)
-  @ApiBearerAuth()
+  // @UseGuards(StaffJwtAuthGuard)
+  // @ApiBearerAuth()
   @StaffAuth()
   @ApiQuery({ type: PaginationParams })
   @ApiResponse({

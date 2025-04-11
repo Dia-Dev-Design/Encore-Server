@@ -3,29 +3,10 @@ import bcrypt from 'bcrypt';
 
 const seedStaffUsers = async (prisma: PrismaClient) => {
   const staffUsersData: Prisma.StaffUserCreateInput[] = [
-    {
-      name: 'José Zuniga',
-      email: 'jzuniga+admin@shokworks.io',
-      password: bcrypt.hashSync('3W9E~&f(33)w', 10),
-    },
+
     {
       name: 'Erick Subero',
       email: 'esubero+admin@shokworks.io',
-      password: bcrypt.hashSync('3W9E~&f(33)w', 10),
-    },
-    {
-      name: 'Karen Carreño',
-      email: 'kcarreno+admin@shokworks.io',
-      password: bcrypt.hashSync('3W9E~&f(33)w', 10),
-    },
-    {
-      name: 'Erick Umanchuk',
-      email: 'eumanchuk+admin@shokworks.io',
-      password: bcrypt.hashSync('3W9E~&f(33)w', 10),
-    },
-    {
-      name: 'Juliana Ramirez',
-      email: 'jramirez+admin@shokworks.io',
       password: bcrypt.hashSync('3W9E~&f(33)w', 10),
     },
     {
