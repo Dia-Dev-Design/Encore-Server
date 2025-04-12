@@ -3,31 +3,30 @@ app = "encore-dia-beta-server"
 primary_region = "mia"  
 
 [http_service]
-  internal_port = 3000  
+  internal_port = 3000
   force_https = true
   auto_stop_machines = true
   auto_start_machines = true
   min_machines_running = 0
-  processes = ["app"]
 
 [build]
   dockerfile = "Dockerfile"
 
 [env]
   NODE_ENV = "production"
-  PORT = "3000"  # Adjust if needed
+  PORT = "3000"
 
-# Memory and CPU allocation
-[processes]
-  app = { memory = "512MB", cpu_kind = "shared", cpu_cores = 1 }
+# This is the corrected format for processes
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
 
 # Health check
-[checks]
-  [checks.health]
-    port = 3000
-    type = "http"
+[http_service.checks]
+  [http_service.checks.health]
     interval = "10s"
     timeout = "2s"
     grace_period = "10s"
     method = "GET"
-    path = "/health"  
+    path = "/health"
