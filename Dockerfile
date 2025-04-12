@@ -16,10 +16,10 @@ WORKDIR /usr/app
 
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
+# Ensure app listens on Fly.io's expected port
+ENV PORT=8080
 
 COPY package.json package-lock.json ./
-# COPY package.json yarn.lock ./
-
 RUN npm install --production && npm add ts-node
 
 COPY . ./
@@ -30,4 +30,5 @@ COPY --from=development /usr/app/node_modules/@prisma ./node_modules/@prisma
 
 RUN ls -la ./dist
 
-CMD ["sh", "-c", "npx prisma generate && npm ts-node && npm run start:prod"]
+# Fixed command - removed the incorrect "npm ts-node" part
+CMD ["sh", "-c", "npx prisma generate && npm run start:prod"]

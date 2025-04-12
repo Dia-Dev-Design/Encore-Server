@@ -1,13 +1,11 @@
-
-app = 'encore-dia-beta-server'
-
-primary_region = 'mia'
+app = "encore-dia-beta-server"
+primary_region = "mia"
 
 [build]
   dockerfile = "Dockerfile"
 
 [http_service]
-  internal_port = 3000
+  internal_port = 8080
   force_https = true
   auto_stop_machines = 'stop'
   auto_start_machines = true
