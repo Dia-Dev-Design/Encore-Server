@@ -1,6 +1,5 @@
 app = "encore-dia-beta-server"
-
-primary_region = "mia"  
+primary_region = "mia"
 
 [http_service]
   internal_port = 3000
@@ -16,17 +15,15 @@ primary_region = "mia"
   NODE_ENV = "production"
   PORT = "3000"
 
-# This is the corrected format for processes
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 512
 
-# Health check
-[http_service.checks]
-  [http_service.checks.health]
-    interval = "10s"
-    timeout = "2s"
-    grace_period = "10s"
-    method = "GET"
-    path = "/health"
+# Corrected health check format
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "10s"
+  method = "GET"
+  path = "/health"
+  timeout = "2s"
