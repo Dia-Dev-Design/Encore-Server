@@ -1,6 +1,10 @@
 import { NestFactory, Reflector } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { DocumentBuilder, SwaggerCustomOptions, SwaggerModule } from '@nestjs/swagger';
+import {
+  DocumentBuilder,
+  SwaggerCustomOptions,
+  SwaggerModule,
+} from '@nestjs/swagger';
 import { Request, Response, NextFunction } from 'express';
 import configuration from './config/config';
 import { Logger, ValidationPipe } from '@nestjs/common';
@@ -10,6 +14,7 @@ import { StaffJwtAuthGuard } from './auth/staff-auth.guard';
 import logger from 'morgan';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 
+
 const config = configuration();
 
 async function bootstrap() {
@@ -18,13 +23,10 @@ async function bootstrap() {
   try {
     const app = await NestFactory.create(AppModule, {
       //forceCloseConnections: true,
-      cors: false,
+      // cors: false,
     });
-
-    app.enableCors({
-      origin: false,
-    });
-
+    app.enableCors();
+  
     // Add middleware to remove any CORS headers that might still be added
     app.use((req: Request, res: Response, next: NextFunction) => {
       res.removeHeader('Access-Control-Allow-Origin');
@@ -48,6 +50,7 @@ async function bootstrap() {
       })
     );
 
+
     app.useGlobalFilters(new GlobalExceptionFilter());
 
     const swaggerConfig = new DocumentBuilder()
@@ -67,6 +70,7 @@ async function bootstrap() {
     log.log('Applying global guards...');
     app.useGlobalGuards(new JwtAuthGuard(reflector));
     log.log('Global guards applied successfully');
+
 
     // TODO: Remove this in production
 
