@@ -29,7 +29,7 @@ async function bootstrap() {
       preflightContinue: false,
       optionsSuccessStatus: 204,
       credentials: true,
-      allowedHeaders: 'Origin,X-Requested-With,Content-Type,Accept,Authorization',
+      allowedHeaders: '*',  // Allow all headers
     });
     
     log.log('NestFactory created successfully');
