@@ -217,6 +217,7 @@ export class AuthController {
     @User() user: UserJwtPayload,
     @Res({ passthrough: true }) res: Response,
   ) {
+    console.log("Having an error in backend auth route=====>", user)
     return await this.userService.getUser(user);
   }
 
