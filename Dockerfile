@@ -1,34 +1,29 @@
-# Development stage
-FROM node:20.10-alpine AS development
+FROM node:20.10-alpine AS build
 
-WORKDIR /usr/app
+WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+COPY package*.json ./
+RUN npm ci
 
-COPY . ./
-RUN npx prisma generate && npm run build
+COPY . .
+RUN npx prisma generate
+RUN npm run build
 
-# Production stage
 FROM node:20.10-alpine AS production
 
-WORKDIR /usr/app
+WORKDIR /app
 
-ARG NODE_ENV=production
-ENV NODE_ENV=${NODE_ENV}
-# Ensure app listens on Fly.io's expected port
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY package*.json ./
+COPY prisma ./prisma
+
+# Set environment variables
+ENV NODE_ENV=production
 ENV PORT=8080
 
-COPY package.json package-lock.json ./
-RUN npm install --production && npm add ts-node
+EXPOSE 8080
 
-COPY . ./
-
-COPY --from=development /usr/app/dist ./dist
-COPY --from=development /usr/app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=development /usr/app/node_modules/@prisma ./node_modules/@prisma
-
-RUN ls -la ./dist
-
-# Fixed command - removed the incorrect "npm ts-node" part
-CMD ["sh", "-c", "npx prisma generate && npm run start:prod"]
+# Command to run the application
+CMD ["node", "dist/main"]
