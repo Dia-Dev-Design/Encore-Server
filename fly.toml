@@ -1,8 +1,16 @@
-app = "encore-dia-beta-server"
-primary_region = "mia"
+# fly.toml app configuration file generated for encore-dia-beta-server-bold-mountain-1613 on 2025-04-12T20:05:28-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'encore-dia-beta-server-bold-mountain-1613'
+primary_region = 'mia'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
+
+[env]
+  NODE_ENV = 'production'
 
 [http_service]
   internal_port = 8080
@@ -10,16 +18,8 @@ primary_region = "mia"
   auto_stop_machines = 'stop'
   auto_start_machines = true
   min_machines_running = 0
-  processes = ['app']
 
 [[vm]]
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
-
-[[http_service.checks]]
-  grace_period = "10s"
-  interval = "10s"
-  method = "GET"
-  path = "/health"
-  timeout = "2s"
